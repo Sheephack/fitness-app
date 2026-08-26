@@ -1,0 +1,134 @@
+import { useCallback, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import { useTranslation } from 'react-i18next';
+import { AppText, Button, Card, Field, ProgressBar, Screen, SectionHeader } from '@/components/ui';
+import { displayToKg, kgToDisplay, roundTo } from '@/domain/units';
+import { calculateWeightSummary, type WeightSummary } from '@/domain/weightTrend';
+import type { Profile, Settings, WeightEntry } from '@/domain/types';
+import { useFitnessService } from '@/providers/servicesContext';
+
+export default function WeightScreen() {
+  const { t } = useTranslation();
+  const { service } = useFitnessService();
+  const [weight, setWeight] = useState('');
+  const [note, setNote] = useState('');
+  const [entries, setEntries] = useState<WeightEntry[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [summary, setSummary] = useState<WeightSummary | null>(null);
+  const load = useCallback(() => {
+    Promise.all([service.listWeights(), service.getSettings(), service.getProfile()]).then(
+      ([items, currentSettings, currentProfile]) => {
+        setEntries(items);
+        setSettings(currentSettings);
+        setProfile(currentProfile);
+        setSummary(calculateWeightSummary(items, currentProfile?.targetWeightKg ?? null));
+      },
+    );
+  }, [service]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
+  if (!settings)
+    return (
+      <Screen>
+        <AppText>{t('common.loading')}</AppText>
+      </Screen>
+    );
+  const unit = settings.unitSystem === 'metric' ? t('common.kg') : t('common.lb');
+  const format = (kg: number) => `${roundTo(kgToDisplay(kg, settings.unitSystem), 1)} ${unit}`;
+  const add = async () => {
+    if (Number(weight) <= 0) return;
+    await service.addWeight(displayToKg(Number(weight), settings.unitSystem), note);
+    setWeight('');
+    setNote('');
+    load();
+  };
+  return (
+    <Screen>
+      <AppText variant="display">{t('weight.title')}</AppText>
+      <AppText muted>{t('weight.subtitle')}</AppText>
+      <Card>
+        <Field
+          label={`${t('weight.add')} (${unit})`}
+          keyboardType="decimal-pad"
+          value={weight}
+          onChangeText={setWeight}
+        />
+        <Field label={t('weight.note')} value={note} onChangeText={setNote} />
+        <Button label={t('weight.add')} onPress={() => void add()} disabled={Number(weight) <= 0} />
+      </Card>
+      {summary?.latest ? (
+        <>
+          <Card>
+            <AppText variant="label" muted>
+              {t('weight.current')}
+            </AppText>
+            <AppText variant="display">{format(summary.latest.weightKg)}</AppText>
+            {summary.latestChangeKg !== null ? (
+              <AppText muted>
+                {t('weight.lastChange')}: {summary.latestChangeKg > 0 ? '+' : ''}
+                {format(summary.latestChangeKg)}
+              </AppText>
+            ) : null}
+          </Card>
+          <Card>
+            <AppText variant="subtitle">{t('weight.movingAverage')}</AppText>
+            <AppText variant="title">
+              {format(summary.movingAverage7dKg ?? summary.latest.weightKg)}
+            </AppText>
+            <AppText variant="caption" muted>
+              {t('weight.movingAverageHelp')}
+            </AppText>
+          </Card>
+          <Card>
+            <AppText variant="subtitle">{t('weight.trend')}</AppText>
+            {summary.linearTrend30dKgPerWeek === null ? (
+              <AppText muted>{t('weight.insufficient')}</AppText>
+            ) : (
+              <AppText variant="title">
+                {summary.linearTrend30dKgPerWeek > 0 ? '+' : ''}
+                {format(summary.linearTrend30dKgPerWeek)} {t('weight.perWeek')}
+              </AppText>
+            )}
+            <AppText variant="caption" muted>
+              {t('weight.trendHelp')}
+            </AppText>
+          </Card>
+          {summary.goalProgress !== null && profile ? (
+            <Card>
+              <AppText variant="subtitle">{t('weight.progress')}</AppText>
+              <ProgressBar value={summary.goalProgress} />
+              <View style={styles.between}>
+                <AppText muted>{Math.round(summary.goalProgress * 100)}%</AppText>
+                <AppText muted>{format(profile.targetWeightKg)}</AppText>
+              </View>
+            </Card>
+          ) : null}
+        </>
+      ) : null}
+      <SectionHeader title={t('weight.history')} />
+      {entries.length === 0 ? (
+        <Card>
+          <AppText muted>{t('common.noData')}</AppText>
+        </Card>
+      ) : (
+        [...entries].reverse().map((entry) => (
+          <Card key={entry.id}>
+            <View style={styles.between}>
+              <AppText variant="subtitle">{format(entry.weightKg)}</AppText>
+              <AppText muted>{entry.localDate}</AppText>
+            </View>
+            {entry.note ? <AppText muted>{entry.note}</AppText> : null}
+          </Card>
+        ))
+      )}
+    </Screen>
+  );
+}
+const styles = StyleSheet.create({
+  between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+});
