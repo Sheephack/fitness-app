@@ -1,5 +1,6 @@
 import { createMemoryFitnessService, DeterministicIdGenerator } from '@/db/memoryRepositories';
 import { parseLocalDate } from '@/domain/localDate';
+import { normalizeBarcode } from '@/domain/barcode';
 import type { Clock } from './ports';
 import type { Settings } from '@/domain/types';
 
@@ -70,5 +71,65 @@ describe('FitnessService repository contract', () => {
     await service.logFood(food, 'breakfast', 1, parseLocalDate('2026-08-24'));
     expect(await service.listFoodLog(parseLocalDate('2026-08-24'))).toHaveLength(1);
     expect(await service.listFoodLog(parseLocalDate('2026-08-25'))).toHaveLength(0);
+  });
+
+  test('preserves imported unknown nutrients in the food-log snapshot', async () => {
+    const service = createMemoryFitnessService(
+      settings,
+      fixedClock,
+      new DeterministicIdGenerator(),
+    );
+    const barcode = normalizeBarcode('4006381333931')!;
+    const food = await service.importExternalFood(
+      {
+        barcode,
+        name: 'Imported product',
+        brand: null,
+        quantityDescription: null,
+        servingDescription: '100 g',
+        servingGrams: 100,
+        basis: 'per_100g',
+        nutrition: { calories: 250, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0, sodiumMg: null },
+        knownNutrients: {
+          calories: true,
+          proteinG: false,
+          carbsG: false,
+          fatG: false,
+          fiberG: false,
+          sodiumMg: false,
+        },
+        externalId: barcode.value,
+        sourceUpdatedAtUtc: null,
+      },
+      {
+        name: 'Imported product',
+        brand: null,
+        servingDescription: '100 g',
+        servingGrams: 100,
+        calories: 250,
+        proteinG: 0,
+        carbsG: 0,
+        fatG: 0,
+        fiberG: 0,
+        sodiumMg: null,
+        knownNutrients: {
+          calories: true,
+          proteinG: false,
+          carbsG: false,
+          fatG: false,
+          fiberG: false,
+          sodiumMg: false,
+        },
+      },
+      false,
+    );
+    await service.logFoodQuantity(food, 'lunch', { kind: 'grams', grams: 40 });
+    const [entry] = await service.listFoodLog();
+    if (!entry) throw new Error('Expected a food log entry');
+    expect(entry.snapshot.calories).toBe(250);
+    expect(entry.snapshot.knownNutrients).toMatchObject({ calories: true, proteinG: false });
+    const dashboard = await service.getDashboard();
+    expect(dashboard.nutritionComplete.proteinG).toBe(false);
+    expect(dashboard.balance).toBeNull();
   });
 });

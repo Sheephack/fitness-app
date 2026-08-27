@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { AppText, Button, Card, Field, Screen } from '@/components/ui';
+import { parseDecimalInput } from '@/domain/numericInput';
 import { useFitnessService } from '@/providers/servicesContext';
 
 type RangeName = 'protein' | 'carbs' | 'fat' | 'fiber';
@@ -27,7 +28,9 @@ export default function GoalsScreen() {
     () =>
       z
         .object({
-          calories: z.string().refine((v) => Number(v) > 0, t('onboarding.positive')),
+          calories: z
+            .string()
+            .refine((v) => (parseDecimalInput(v) ?? 0) > 0, t('onboarding.positive')),
           proteinMin: z.string(),
           proteinMax: z.string(),
           carbsMin: z.string(),
@@ -39,8 +42,8 @@ export default function GoalsScreen() {
         })
         .superRefine((data, ctx) => {
           for (const name of ['protein', 'carbs', 'fat', 'fiber'] as RangeName[]) {
-            const min = Number(data[`${name}Min` as keyof GoalForm]);
-            const max = Number(data[`${name}Max` as keyof GoalForm]);
+            const min = parseDecimalInput(data[`${name}Min` as keyof GoalForm]) ?? Number.NaN;
+            const max = parseDecimalInput(data[`${name}Max` as keyof GoalForm]) ?? Number.NaN;
             if (!Number.isFinite(min) || min < 0)
               ctx.addIssue({
                 code: 'custom',
@@ -94,11 +97,23 @@ export default function GoalsScreen() {
   }, [reset, service]);
   const submit = handleSubmit(async (values) => {
     await service.saveNutritionGoals({
-      caloriesTarget: Number(values.calories),
-      protein: { min: Number(values.proteinMin), max: Number(values.proteinMax) },
-      carbs: { min: Number(values.carbsMin), max: Number(values.carbsMax) },
-      fat: { min: Number(values.fatMin), max: Number(values.fatMax) },
-      fiber: { min: Number(values.fiberMin), max: Number(values.fiberMax) },
+      caloriesTarget: parseDecimalInput(values.calories) as number,
+      protein: {
+        min: parseDecimalInput(values.proteinMin) as number,
+        max: parseDecimalInput(values.proteinMax) as number,
+      },
+      carbs: {
+        min: parseDecimalInput(values.carbsMin) as number,
+        max: parseDecimalInput(values.carbsMax) as number,
+      },
+      fat: {
+        min: parseDecimalInput(values.fatMin) as number,
+        max: parseDecimalInput(values.fatMax) as number,
+      },
+      fiber: {
+        min: parseDecimalInput(values.fiberMin) as number,
+        max: parseDecimalInput(values.fiberMax) as number,
+      },
     });
     router.back();
   });

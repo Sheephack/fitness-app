@@ -3,9 +3,13 @@ import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { router, useLocalSearchParams } from 'expo-router';
+import { Alert } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { AppText, Button, Card, Field, Screen } from '@/components/ui';
 import { useFitnessService } from '@/providers/servicesContext';
+import { parseDecimalInput } from '@/domain/numericInput';
+import { normalizeBarcode } from '@/domain/barcode';
+import type { BarcodeFormat } from '@/domain/types';
 
 interface FoodForm {
   name: string;
@@ -23,20 +27,31 @@ interface FoodForm {
 export default function FoodFormScreen() {
   const { t } = useTranslation();
   const { service } = useFitnessService();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, barcode, barcodeFormat, fromAddFood, mealType, localDate } = useLocalSearchParams<{
+    id?: string;
+    barcode?: string;
+    barcodeFormat?: string;
+    fromAddFood?: string;
+    mealType?: string;
+    localDate?: string;
+  }>();
+  const numberIs = (value: string, positive: boolean) => {
+    const parsed = parseDecimalInput(value);
+    return parsed !== null && (positive ? parsed > 0 : parsed >= 0);
+  };
   const schema = useMemo(
     () =>
       z.object({
         name: z.string().trim().min(1, t('onboarding.required')),
         brand: z.string(),
         servingDescription: z.string().trim().min(1, t('onboarding.required')),
-        servingGrams: z.string().refine((v) => Number(v) > 0, t('onboarding.positive')),
-        calories: z.string().refine((v) => Number(v) >= 0, t('onboarding.positive')),
-        protein: z.string().refine((v) => v === '' || Number(v) >= 0, t('onboarding.positive')),
-        carbs: z.string().refine((v) => v === '' || Number(v) >= 0, t('onboarding.positive')),
-        fat: z.string().refine((v) => v === '' || Number(v) >= 0, t('onboarding.positive')),
-        fiber: z.string().refine((v) => v === '' || Number(v) >= 0, t('onboarding.positive')),
-        sodium: z.string().refine((v) => v === '' || Number(v) >= 0, t('onboarding.positive')),
+        servingGrams: z.string().refine((v) => numberIs(v, true), t('onboarding.positive')),
+        calories: z.string().refine((v) => numberIs(v, false), t('onboarding.positive')),
+        protein: z.string().refine((v) => v === '' || numberIs(v, false), t('onboarding.positive')),
+        carbs: z.string().refine((v) => v === '' || numberIs(v, false), t('onboarding.positive')),
+        fat: z.string().refine((v) => v === '' || numberIs(v, false), t('onboarding.positive')),
+        fiber: z.string().refine((v) => v === '' || numberIs(v, false), t('onboarding.positive')),
+        sodium: z.string().refine((v) => v === '' || numberIs(v, false), t('onboarding.positive')),
       }),
     [t],
   );
@@ -70,30 +85,61 @@ export default function FoodFormScreen() {
             servingDescription: item.serving.description,
             servingGrams: String(item.serving.grams),
             calories: String(item.serving.calories),
-            protein: String(item.serving.proteinG),
-            carbs: String(item.serving.carbsG),
-            fat: String(item.serving.fatG),
-            fiber: String(item.serving.fiberG),
-            sodium: String(item.serving.sodiumMg ?? ''),
+            protein: item.serving.knownNutrients.proteinG ? String(item.serving.proteinG) : '',
+            carbs: item.serving.knownNutrients.carbsG ? String(item.serving.carbsG) : '',
+            fat: item.serving.knownNutrients.fatG ? String(item.serving.fatG) : '',
+            fiber: item.serving.knownNutrients.fiberG ? String(item.serving.fiberG) : '',
+            sodium: item.serving.knownNutrients.sodiumMg ? String(item.serving.sodiumMg ?? '') : '',
           });
       });
   }, [id, reset, service]);
   const submit = handleSubmit(async (values) => {
+    const parsedBarcode =
+      barcode && ['ean13', 'ean8', 'upc_a', 'upc_e'].includes(barcodeFormat ?? '')
+        ? normalizeBarcode(barcode, barcodeFormat as BarcodeFormat)
+        : barcode
+          ? normalizeBarcode(barcode)
+          : null;
+    const protein = parseDecimalInput(values.protein);
+    const carbs = parseDecimalInput(values.carbs);
+    const fat = parseDecimalInput(values.fat);
+    const fiber = parseDecimalInput(values.fiber);
+    const sodium = parseDecimalInput(values.sodium);
     const draft = {
       name: values.name,
       brand: values.brand || null,
       servingDescription: values.servingDescription,
-      servingGrams: Number(values.servingGrams),
-      calories: Number(values.calories),
-      proteinG: Number(values.protein || 0),
-      carbsG: Number(values.carbs || 0),
-      fatG: Number(values.fat || 0),
-      fiberG: Number(values.fiber || 0),
-      sodiumMg: values.sodium ? Number(values.sodium) : null,
+      servingGrams: parseDecimalInput(values.servingGrams) as number,
+      calories: parseDecimalInput(values.calories) as number,
+      proteinG: protein ?? 0,
+      carbsG: carbs ?? 0,
+      fatG: fat ?? 0,
+      fiberG: fiber ?? 0,
+      sodiumMg: sodium,
+      knownNutrients: {
+        calories: true,
+        proteinG: protein !== null,
+        carbsG: carbs !== null,
+        fatG: fat !== null,
+        fiberG: fiber !== null,
+        sodiumMg: sodium !== null,
+      },
+      barcode: parsedBarcode,
     };
-    if (id) await service.updateFood(id, draft);
-    else await service.createFood(draft);
-    router.back();
+    if (id) {
+      await service.updateFood(id, draft);
+      router.back();
+    } else {
+      const food = await service.createFood(draft);
+      if (fromAddFood === '1') {
+        router.replace({
+          pathname: '/add-food',
+          params: { mealType, localDate, selectedId: food.food.id },
+        });
+      } else {
+        router.back();
+      }
+    }
   });
   const fields: { name: keyof FoodForm; label: string }[] = [
     { name: 'name', label: t('food.name') },
@@ -133,6 +179,22 @@ export default function FoodFormScreen() {
         ))}
       </Card>
       <Button label={t('common.save')} onPress={() => void submit()} loading={isSubmitting} />
+      {id ? (
+        <Button
+          label={t('food.archiveAction')}
+          variant="danger"
+          onPress={() =>
+            Alert.alert(t('food.archiveTitle'), t('food.archiveBody'), [
+              { text: t('common.cancel'), style: 'cancel' },
+              {
+                text: t('food.archiveAction'),
+                style: 'destructive',
+                onPress: () => void service.archiveFood(id).then(() => router.back()),
+              },
+            ])
+          }
+        />
+      ) : null}
       <Button label={t('common.cancel')} variant="ghost" onPress={() => router.back()} />
     </Screen>
   );

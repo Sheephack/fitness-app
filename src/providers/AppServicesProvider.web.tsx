@@ -1,22 +1,28 @@
 import { useMemo, type PropsWithChildren } from 'react';
 import { getLocales } from 'expo-localization';
 import { resolveInitialSettings } from '@/application/devicePreferences';
-import { createMemoryFitnessService } from '@/db/memoryRepositories';
+import { BarcodeResolver } from '@/application/BarcodeResolver';
+import { createMemoryAppServices } from '@/db/memoryRepositories';
+import { OpenFoodFactsProvider } from '@/integrations/OpenFoodFactsProvider';
 import { ServicesContext } from './servicesContext';
 
 export function AppServicesProvider({ children }: PropsWithChildren) {
-  const service = useMemo(() => {
+  const services = useMemo(() => {
     const locale = getLocales()[0];
-    return createMemoryFitnessService(
+    const memory = createMemoryAppServices(
       resolveInitialSettings(
         locale?.languageCode ?? null,
         locale?.languageTag ?? null,
         locale?.regionCode ?? null,
       ),
     );
+    return {
+      service: memory.service,
+      barcodeResolver: new BarcodeResolver(memory.repositories.foods, new OpenFoodFactsProvider()),
+    };
   }, []);
   return (
-    <ServicesContext.Provider value={{ service, previewMode: true }}>
+    <ServicesContext.Provider value={{ ...services, previewMode: true }}>
       {children}
     </ServicesContext.Provider>
   );

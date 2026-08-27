@@ -7,7 +7,7 @@ import type {
 } from '@/application/ports';
 import { FitnessService } from '@/application/FitnessService';
 import { SystemClock } from '@/application/systemClock';
-import { normalizeFoodSearch } from '@/domain/nutrition';
+import { ALL_NUTRIENTS_KNOWN, normalizeFoodSearch } from '@/domain/nutrition';
 import type {
   FoodDraft,
   FoodLogEntry,
@@ -47,15 +47,39 @@ class MemoryFoodRepository implements FoodRepository {
   constructor(private readonly state: MemoryState) {}
   async list(query = ''): Promise<FoodWithServing[]> {
     const normalized = normalizeFoodSearch(query);
+    const recent = new Map(
+      [...this.state.log]
+        .sort((a, b) => b.loggedAtUtc.localeCompare(a.loggedAtUtc))
+        .map((entry, index) => [entry.foodId, index]),
+    );
     return clone(
       this.state.foods
         .filter(
           (item) =>
             !item.food.archivedAtUtc &&
-            (item.food.normalizedName.includes(normalized) ||
-              (item.food.brand ?? '').toLocaleLowerCase().includes(query.toLocaleLowerCase())),
+            normalizeFoodSearch(`${item.food.name} ${item.food.brand ?? ''}`).includes(normalized),
         )
-        .sort((a, b) => Number(b.food.isFavorite) - Number(a.food.isFavorite)),
+        .sort((a, b) => {
+          const aExact =
+            a.food.normalizedName === normalized
+              ? 0
+              : a.food.normalizedName.startsWith(normalized)
+                ? 1
+                : 2;
+          const bExact =
+            b.food.normalizedName === normalized
+              ? 0
+              : b.food.normalizedName.startsWith(normalized)
+                ? 1
+                : 2;
+          return (
+            aExact - bExact ||
+            Number(b.food.isFavorite) - Number(a.food.isFavorite) ||
+            (recent.get(a.food.id) ?? Number.MAX_SAFE_INTEGER) -
+              (recent.get(b.food.id) ?? Number.MAX_SAFE_INTEGER) ||
+            a.food.name.localeCompare(b.food.name)
+          );
+        }),
     );
   }
   async listRecent(limit: number): Promise<FoodWithServing[]> {
@@ -64,10 +88,28 @@ class MemoryFoodRepository implements FoodRepository {
       .map((entry) => entry.foodId)
       .filter((id, index, all): id is UUID => Boolean(id) && all.indexOf(id) === index)
       .slice(0, limit);
-    return clone(ids.flatMap((id) => this.state.foods.filter((food) => food.food.id === id)));
+    return clone(
+      ids.flatMap((id) =>
+        this.state.foods.filter((food) => food.food.id === id && !food.food.archivedAtUtc),
+      ),
+    );
+  }
+  async listFavorites(limit: number): Promise<FoodWithServing[]> {
+    return clone(
+      this.state.foods
+        .filter((item) => item.food.isFavorite && !item.food.archivedAtUtc)
+        .slice(0, limit),
+    );
   }
   async get(id: UUID): Promise<FoodWithServing | null> {
     return clone(this.state.foods.find((item) => item.food.id === id) ?? null);
+  }
+  async findByBarcode(canonicalKey: string): Promise<FoodWithServing | null> {
+    return clone(
+      this.state.foods.find(
+        (item) => item.food.barcodeKey === canonicalKey && !item.food.archivedAtUtc,
+      ) ?? null,
+    );
   }
   async create(
     id: UUID,
@@ -83,6 +125,14 @@ class MemoryFoodRepository implements FoodRepository {
         brand: draft.brand,
         isFavorite: false,
         source: 'custom',
+        barcode: draft.barcode?.value ?? null,
+        barcodeFormat: draft.barcode?.format ?? null,
+        barcodeKey: draft.barcode?.canonicalKey ?? null,
+        providerId: draft.providerId ?? null,
+        externalId: draft.externalId ?? null,
+        sourceUpdatedAtUtc: draft.sourceUpdatedAtUtc ?? null,
+        importedAtUtc: draft.importedAtUtc ?? null,
+        verificationStatus: draft.verificationStatus ?? 'not_applicable',
         archivedAtUtc: null,
         createdAtUtc: nowUtc,
         updatedAtUtc: nowUtc,
@@ -92,6 +142,7 @@ class MemoryFoodRepository implements FoodRepository {
         foodId: id,
         description: draft.servingDescription,
         grams: draft.servingGrams,
+        knownNutrients: draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN,
         calories: draft.calories,
         proteinG: draft.proteinG,
         carbsG: draft.carbsG,
@@ -111,6 +162,7 @@ class MemoryFoodRepository implements FoodRepository {
       name: draft.name,
       normalizedName: normalizeFoodSearch(draft.name),
       brand: draft.brand,
+      verificationStatus: item.food.providerId ? 'edited' : item.food.verificationStatus,
       updatedAtUtc: nowUtc,
     };
     item.serving = {
@@ -123,6 +175,7 @@ class MemoryFoodRepository implements FoodRepository {
       fatG: draft.fatG,
       fiberG: draft.fiberG,
       sodiumMg: draft.sodiumMg,
+      knownNutrients: draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN,
     };
     return clone(item);
   }
@@ -151,6 +204,14 @@ export function createMemoryFitnessService(
   clock: Clock = new SystemClock(),
   ids: IdGenerator = new DeterministicIdGenerator(),
 ): FitnessService {
+  return createMemoryAppServices(defaults, clock, ids).service;
+}
+
+export function createMemoryAppServices(
+  defaults: Settings,
+  clock: Clock = new SystemClock(),
+  ids: IdGenerator = new DeterministicIdGenerator(),
+): { service: FitnessService; repositories: AppRepositories } {
   const state: MemoryState = {
     settings: clone(defaults),
     profile: null,
@@ -210,5 +271,5 @@ export function createMemoryFitnessService(
     },
     transactions: { run: async (operation) => operation() },
   };
-  return new FitnessService(repositories, ids, clock);
+  return { service: new FitnessService(repositories, ids, clock), repositories };
 }

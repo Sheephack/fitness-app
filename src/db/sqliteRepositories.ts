@@ -12,10 +12,17 @@ import type {
   TransactionRunner,
   WeightRepository,
 } from '@/application/ports';
-import { normalizeFoodSearch } from '@/domain/nutrition';
+import {
+  ALL_NUTRIENTS_KNOWN,
+  normalizeFoodSearch,
+  nutritionAvailabilityFromMask,
+  nutritionAvailabilityToMask,
+} from '@/domain/nutrition';
 import { parseLocalDate } from '@/domain/localDate';
 import type {
   Food,
+  Barcode,
+  BarcodeFormat,
   FoodDraft,
   FoodLogEntry,
   FoodServing,
@@ -31,13 +38,32 @@ import type {
 type SqlRow = Record<string, string | number | null>;
 
 function mapFood(row: SqlRow): FoodWithServing {
+  const barcodeFormat =
+    row.barcode_format === 'ean13' ||
+    row.barcode_format === 'ean8' ||
+    row.barcode_format === 'upc_a' ||
+    row.barcode_format === 'upc_e'
+      ? (row.barcode_format as BarcodeFormat)
+      : null;
   const food: Food = {
     id: String(row.id),
     name: String(row.name),
     normalizedName: String(row.normalized_name),
     brand: row.brand === null ? null : String(row.brand),
     isFavorite: Number(row.is_favorite) === 1,
-    source: row.source === 'seed' ? 'seed' : 'custom',
+    source: row.provider_id !== null ? 'external' : row.source === 'seed' ? 'seed' : 'custom',
+    barcode: row.barcode === null ? null : (String(row.barcode) as Barcode),
+    barcodeFormat,
+    barcodeKey: row.barcode_key === null ? null : String(row.barcode_key),
+    providerId: row.provider_id === null ? null : String(row.provider_id),
+    externalId: row.external_id === null ? null : String(row.external_id),
+    sourceUpdatedAtUtc:
+      row.source_updated_at_utc === null ? null : String(row.source_updated_at_utc),
+    importedAtUtc: row.imported_at_utc === null ? null : String(row.imported_at_utc),
+    verificationStatus:
+      row.verification_status === 'reviewed' || row.verification_status === 'edited'
+        ? row.verification_status
+        : 'not_applicable',
     archivedAtUtc: row.archived_at_utc === null ? null : String(row.archived_at_utc),
     createdAtUtc: String(row.created_at_utc),
     updatedAtUtc: String(row.updated_at_utc),
@@ -47,6 +73,7 @@ function mapFood(row: SqlRow): FoodWithServing {
     foodId: food.id,
     description: String(row.description),
     grams: Number(row.grams),
+    knownNutrients: nutritionAvailabilityFromMask(Number(row.known_nutrients_mask ?? 63)),
     calories: Number(row.calories),
     proteinG: Number(row.protein_g),
     carbsG: Number(row.carbs_g),
@@ -221,10 +248,21 @@ class SqliteFoodRepository implements FoodRepository {
   async list(query = ''): Promise<FoodWithServing[]> {
     const normalized = normalizeFoodSearch(query);
     const rows = await this.db.getAllAsync<SqlRow>(
-      `${FOOD_SELECT} WHERE f.archived_at_utc IS NULL AND (f.normalized_name LIKE ? OR COALESCE(f.brand,'') LIKE ?)
-       ORDER BY f.is_favorite DESC, f.name COLLATE NOCASE ASC`,
+      `${FOOD_SELECT}
+       LEFT JOIN (
+         SELECT food_id, MAX(logged_at_utc) AS recent_at
+         FROM food_log_entries WHERE food_id IS NOT NULL GROUP BY food_id
+       ) recent ON recent.food_id=f.id
+       WHERE f.archived_at_utc IS NULL AND f.search_text LIKE ?
+       ORDER BY
+         CASE WHEN f.normalized_name=? THEN 0 WHEN f.normalized_name LIKE ? THEN 1 ELSE 2 END,
+         f.is_favorite DESC,
+         CASE WHEN recent.recent_at IS NULL THEN 1 ELSE 0 END,
+         recent.recent_at DESC,
+         f.name COLLATE NOCASE ASC`,
       `%${normalized}%`,
-      `%${query.trim()}%`,
+      normalized,
+      `${normalized}%`,
     );
     return rows.map(mapFood);
   }
@@ -238,8 +276,24 @@ class SqliteFoodRepository implements FoodRepository {
     );
     return rows.map(mapFood);
   }
+  async listFavorites(limit: number): Promise<FoodWithServing[]> {
+    const rows = await this.db.getAllAsync<SqlRow>(
+      `${FOOD_SELECT}
+       WHERE f.archived_at_utc IS NULL AND f.is_favorite=1
+       ORDER BY f.updated_at_utc DESC, f.name COLLATE NOCASE ASC LIMIT ?`,
+      limit,
+    );
+    return rows.map(mapFood);
+  }
   async get(id: UUID): Promise<FoodWithServing | null> {
     const row = await this.db.getFirstAsync<SqlRow>(`${FOOD_SELECT} WHERE f.id=? LIMIT 1`, id);
+    return row ? mapFood(row) : null;
+  }
+  async findByBarcode(canonicalKey: string): Promise<FoodWithServing | null> {
+    const row = await this.db.getFirstAsync<SqlRow>(
+      `${FOOD_SELECT} WHERE f.barcode_key=? AND f.archived_at_utc IS NULL LIMIT 1`,
+      canonicalKey,
+    );
     return row ? mapFood(row) : null;
   }
   async create(
@@ -250,18 +304,32 @@ class SqliteFoodRepository implements FoodRepository {
   ): Promise<FoodWithServing> {
     await this.db.withTransactionAsync(async () => {
       await this.db.runAsync(
-        `INSERT INTO foods (id,name,normalized_name,brand,is_favorite,source,archived_at_utc,created_at_utc,updated_at_utc)
-       VALUES (?,?,?,?,0,'custom',NULL,?,?)`,
+        `INSERT INTO foods (
+          id,name,normalized_name,brand,is_favorite,source,archived_at_utc,created_at_utc,updated_at_utc,
+          barcode,barcode_format,barcode_key,provider_id,external_id,source_updated_at_utc,
+          imported_at_utc,verification_status,search_text
+        ) VALUES (?,?,?,?,0,'custom',NULL,?,?,?,?,?,?,?,?,?,?,?)`,
         id,
         draft.name,
         normalizeFoodSearch(draft.name),
         draft.brand,
         nowUtc,
         nowUtc,
+        draft.barcode?.value ?? null,
+        draft.barcode?.format ?? null,
+        draft.barcode?.canonicalKey ?? null,
+        draft.providerId ?? null,
+        draft.externalId ?? null,
+        draft.sourceUpdatedAtUtc ?? null,
+        draft.importedAtUtc ?? null,
+        draft.verificationStatus ?? 'not_applicable',
+        normalizeFoodSearch(`${draft.name} ${draft.brand ?? ''}`),
       );
       await this.db.runAsync(
-        `INSERT INTO food_servings (id,food_id,description,grams,calories,protein_g,carbs_g,fat_g,fiber_g,sodium_mg)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO food_servings (
+          id,food_id,description,grams,calories,protein_g,carbs_g,fat_g,fiber_g,sodium_mg,
+          known_nutrients_mask
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         servingId,
         id,
         draft.servingDescription,
@@ -272,6 +340,7 @@ class SqliteFoodRepository implements FoodRepository {
         draft.fatG,
         draft.fiberG,
         draft.sodiumMg,
+        nutritionAvailabilityToMask(draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN),
       );
     });
     return (await this.get(id)) as FoodWithServing;
@@ -279,15 +348,19 @@ class SqliteFoodRepository implements FoodRepository {
   async update(id: UUID, draft: FoodDraft, nowUtc: string): Promise<FoodWithServing> {
     await this.db.withTransactionAsync(async () => {
       await this.db.runAsync(
-        `UPDATE foods SET name=?, normalized_name=?, brand=?, updated_at_utc=? WHERE id=?`,
+        `UPDATE foods SET name=?, normalized_name=?, brand=?, search_text=?, updated_at_utc=?,
+         verification_status=CASE WHEN provider_id IS NOT NULL THEN 'edited' ELSE verification_status END
+         WHERE id=?`,
         draft.name,
         normalizeFoodSearch(draft.name),
         draft.brand,
+        normalizeFoodSearch(`${draft.name} ${draft.brand ?? ''}`),
         nowUtc,
         id,
       );
       await this.db.runAsync(
-        `UPDATE food_servings SET description=?,grams=?,calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sodium_mg=?
+        `UPDATE food_servings SET description=?,grams=?,calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sodium_mg=?,
+         known_nutrients_mask=?
          WHERE food_id=?`,
         draft.servingDescription,
         draft.servingGrams,
@@ -297,6 +370,7 @@ class SqliteFoodRepository implements FoodRepository {
         draft.fatG,
         draft.fiberG,
         draft.sodiumMg,
+        nutritionAvailabilityToMask(draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN),
         id,
       );
     });
@@ -345,6 +419,9 @@ class SqliteFoodLogRepository implements FoodLogRepository {
         brand: row.snapshot_brand === null ? null : String(row.snapshot_brand),
         servingDescription: String(row.snapshot_serving_description),
         servingGrams: Number(row.snapshot_serving_grams),
+        knownNutrients: nutritionAvailabilityFromMask(
+          Number(row.snapshot_known_nutrients_mask ?? 63),
+        ),
         calories: Number(row.snapshot_calories),
         proteinG: Number(row.snapshot_protein_g),
         carbsG: Number(row.snapshot_carbs_g),
@@ -357,7 +434,12 @@ class SqliteFoodLogRepository implements FoodLogRepository {
   }
   async add(entry: FoodLogEntry): Promise<void> {
     await this.db.runAsync(
-      `INSERT INTO food_log_entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO food_log_entries (
+        id,local_date,meal_type,food_id,serving_id,quantity,snapshot_food_name,snapshot_brand,
+        snapshot_serving_description,snapshot_serving_grams,snapshot_calories,snapshot_protein_g,
+        snapshot_carbs_g,snapshot_fat_g,snapshot_fiber_g,snapshot_sodium_mg,logged_at_utc,
+        snapshot_known_nutrients_mask
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       entry.id,
       entry.localDate,
       entry.mealType,
@@ -375,6 +457,7 @@ class SqliteFoodLogRepository implements FoodLogRepository {
       entry.snapshot.fiberG,
       entry.snapshot.sodiumMg,
       entry.loggedAtUtc,
+      nutritionAvailabilityToMask(entry.snapshot.knownNutrients),
     );
   }
   async remove(id: UUID): Promise<void> {

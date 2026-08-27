@@ -35,7 +35,17 @@ export function Screen({ children, scroll = true }: PropsWithChildren<{ scroll?:
       style={[styles.safe, { backgroundColor: theme.background }]}
       edges={['top', 'left', 'right']}
     >
-      {scroll ? <ScrollView contentContainerStyle={styles.scroll}>{content}</ScrollView> : content}
+      {scroll ? (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
+          {content}
+        </ScrollView>
+      ) : (
+        content
+      )}
     </SafeAreaView>
   );
 }
@@ -64,10 +74,7 @@ export function AppText({
 }) {
   const theme = useAppTheme();
   return (
-    <Text
-      maxFontSizeMultiplier={1.6}
-      style={[styles[variant], { color: muted ? theme.textMuted : theme.text }, style]}
-    >
+    <Text style={[styles[variant], { color: muted ? theme.textMuted : theme.text }, style]}>
       {children}
     </Text>
   );
@@ -219,6 +226,26 @@ export function SectionHeader({ title, action }: { title: string; action?: React
   );
 }
 
+export function InlineNotice({
+  children,
+  tone = 'neutral',
+}: PropsWithChildren<{ tone?: 'neutral' | 'success' | 'warning' | 'danger' }>) {
+  const theme = useAppTheme();
+  const color =
+    tone === 'success'
+      ? theme.accent
+      : tone === 'warning'
+        ? theme.warning
+        : tone === 'danger'
+          ? theme.danger
+          : theme.border;
+  return (
+    <View accessibilityRole="alert" style={[styles.notice, { borderColor: color }]}>
+      <AppText>{children}</AppText>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flexGrow: 1 },
@@ -230,8 +257,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: -0.3 },
   subtitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
   body: { fontSize: 16, lineHeight: 23, fontWeight: '400' },
-  label: { fontSize: 13, lineHeight: 18, fontWeight: '700', letterSpacing: 0.5 },
-  caption: { fontSize: 13, lineHeight: 18, fontWeight: '400' },
+  label: { fontSize: 14, lineHeight: 20, fontWeight: '700', letterSpacing: 0.35 },
+  caption: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
   button: {
     minHeight: 48,
     borderRadius: 14,
@@ -261,5 +288,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: 8,
+  },
+  notice: {
+    minHeight: 48,
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
 });

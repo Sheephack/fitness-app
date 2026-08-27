@@ -23,6 +23,7 @@ function Navigation() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="goals" options={{ presentation: 'modal', title: '' }} />
         <Stack.Screen name="food-form" options={{ presentation: 'modal', title: '' }} />
+        <Stack.Screen name="add-food" options={{ presentation: 'modal', title: '' }} />
       </Stack>
     </>
   );

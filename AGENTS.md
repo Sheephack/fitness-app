@@ -4,7 +4,7 @@
 
 Treat `Prompt Codex — App Local-First de Fitness y Nutrición.md` as the product brief. Routes live in `src/app/`, primitives in `src/components/`, pure rules in `src/domain/`, use cases and ports in `src/application/`, SQLite adapters in `src/db/`, and translations in `src/i18n/locales/{es,en}/`. Store static files in `assets/`, decisions in `docs/`, and tests beside their source.
 
-`src/domain` must never import React, Expo, routing, styling, localization, or SQLite. Screens consume hooks/services and never execute SQL. Release 0 and Release 1 are the active scope.
+`src/domain` must never import React, Expo, routing, styling, localization, SQLite, or external API code. Screens consume hooks/services and never execute SQL. Release 1.1 barcode lookups use application contracts and replaceable adapters; SQLite remains local truth.
 
 ## Build, Test, and Development Commands
 
@@ -16,6 +16,8 @@ Treat `Prompt Codex — App Local-First de Fitness y Nutrición.md` as the produ
 - `npm run test:ci` — execute unit and integration tests once.
 - `npm run bundle:ios` — verify that the iOS JavaScript bundle exports.
 
+`expo-camera` is the current native dependency for iPhone barcode scanning. Web remains an in-memory preview: it supports manual barcode input but is not a camera or persistence acceptance target.
+
 Explain each new dependency and identify packages that introduce native code.
 
 ## Coding Style & Naming Conventions
@@ -24,7 +26,7 @@ Use strict TypeScript, two-space indentation, semicolons, Prettier, and ESLint. 
 
 ## Testing Guidelines
 
-Name tests `*.test.ts` or `*.test.tsx`. Cover nutrition totals, ranges, weight trends, migrations, and every Daily Balance Engine rule with deterministic unit tests. Add focused flow tests for onboarding, food logging, persistence, and language switching. No blanket coverage target applies; critical calculations must cover boundaries and invalid inputs.
+Name tests `*.test.ts` or `*.test.tsx`. Cover nutrition totals, ranges, weight trends, migrations, barcode normalization, provider mapping, and every Daily Balance Engine rule with deterministic tests. Add focused flows for local-first lookup, offline fallback, snapshots, onboarding, food logging, persistence, and language switching. No blanket coverage target applies; critical calculations must cover boundaries and invalid inputs.
 
 ## Commit & Pull Request Guidelines
 
@@ -32,4 +34,4 @@ Use Conventional Commits, for example `feat(nutrition): add macro range evaluati
 
 ## Security & Privacy
 
-Treat profile, weight, and nutrition data as sensitive. Keep essential flows offline, never commit secrets or real health data, and do not send health fields to analytics, crash reports, or external services without explicit consent.
+Treat profile, weight, and nutrition data as sensitive. Keep essential flows offline, never commit secrets or real health data, and do not send health fields to analytics, crash reports, or external services without explicit consent. Barcode providers receive only the barcode and required product fields; never send profile, goals, or journal data.

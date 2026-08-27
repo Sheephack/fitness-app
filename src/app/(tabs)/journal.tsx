@@ -1,11 +1,20 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, View } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { AppText, Button, Card, ChoiceRow, Field, Screen, SectionHeader } from '@/components/ui';
+import {
+  AppText,
+  Button,
+  Card,
+  ChoiceRow,
+  Field,
+  InlineNotice,
+  Screen,
+  SectionHeader,
+} from '@/components/ui';
 import { localDateFromDate } from '@/domain/localDate';
-import { scaleNutrition } from '@/domain/nutrition';
-import type { FoodLogEntry, FoodWithServing, MealTemplate, MealType } from '@/domain/types';
+import { scaleNutrition, totalNutrition } from '@/domain/nutrition';
+import type { FoodLogEntry, MealTemplate, MealType } from '@/domain/types';
 import { useFitnessService } from '@/providers/servicesContext';
 import { useAppTheme } from '@/theme/theme';
 
@@ -15,31 +24,24 @@ export default function JournalScreen() {
   const { t } = useTranslation();
   const theme = useAppTheme();
   const { service } = useFitnessService();
+  const params = useLocalSearchParams<{ feedback?: string }>();
   const today = localDateFromDate(new Date());
-  const [query, setQuery] = useState('');
-  const [foods, setFoods] = useState<FoodWithServing[]>([]);
   const [entries, setEntries] = useState<FoodLogEntry[]>([]);
   const [templates, setTemplates] = useState<MealTemplate[]>([]);
-  const [selected, setSelected] = useState<FoodWithServing | null>(null);
-  const [meal, setMeal] = useState<MealType>('breakfast');
-  const [quantity, setQuantity] = useState('1');
+  const [duplicable, setDuplicable] = useState<MealType[]>([]);
+  const [savingMeal, setSavingMeal] = useState<MealType | null>(null);
   const [mealName, setMealName] = useState('');
+  const [templateMeal, setTemplateMeal] = useState<MealType>('breakfast');
+
   const load = useCallback(() => {
-    Promise.all([
-      service.listFoods(query),
-      service.listFoodLog(today),
-      service.listMealTemplates(),
-    ]).then(([foodList, log, mealTemplates]) => {
-      setFoods(foodList);
-      setEntries(log);
-      setTemplates(mealTemplates);
+    void service.getJournalDay(today).then((data) => {
+      setEntries(data.entries);
+      setTemplates(data.templates);
+      setDuplicable(data.duplicableMeals);
     });
-  }, [query, service, today]);
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
+  }, [service, today]);
+  useFocusEffect(useCallback(load, [load]));
+
   const groups = useMemo(
     () =>
       Object.fromEntries(
@@ -47,205 +49,171 @@ export default function JournalScreen() {
       ) as Record<MealType, FoodLogEntry[]>,
     [entries],
   );
-  const logSelected = async () => {
-    if (!selected || Number(quantity) <= 0) return;
-    await service.logFood(selected, meal, Number(quantity), today);
-    setSelected(null);
-    setQuantity('1');
-    load();
-  };
+
   const duplicate = async (type: MealType) => {
-    const count = await service.duplicateYesterday(type, today);
-    Alert.alert(count ? t('journal.duplicated', { count }) : t('journal.nothingToDuplicate'));
+    await service.duplicateYesterday(type, today);
     load();
   };
-  const saveMeal = async () => {
+  const saveMeal = async (type: MealType) => {
     if (!mealName.trim()) return;
-    try {
-      await service.saveMealTemplate({ name: mealName, localDate: today, mealType: meal });
-      setMealName('');
-      load();
-    } catch {
-      Alert.alert(t('journal.emptyMeal'));
-    }
+    await service.saveMealTemplate({ name: mealName, localDate: today, mealType: type });
+    setMealName('');
+    setSavingMeal(null);
+    load();
   };
-  const archive = (food: FoodWithServing) =>
-    Alert.alert(t('food.archiveTitle'), t('food.archiveBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('common.delete'),
-        style: 'destructive',
-        onPress: () => {
-          void service.archiveFood(food.food.id).then(load);
-        },
-      },
-    ]);
+
+  const feedback =
+    params.feedback === 'food_logged'
+      ? t('feedback.foodLogged')
+      : params.feedback === 'meal_logged'
+        ? t('feedback.mealLogged')
+        : null;
+
   return (
     <Screen>
       <AppText variant="display">{t('journal.title')}</AppText>
       <AppText muted>{t('journal.subtitle', { date: today })}</AppText>
-      <Field label={t('journal.search')} value={query} onChangeText={setQuery} />
-      <Button label={`+ ${t('journal.createFood')}`} onPress={() => router.push('/food-form')} />
-      <SectionHeader title={t('journal.allFoods')} />
-      {foods.length === 0 ? (
-        <Card>
-          <AppText muted>{t('journal.emptyFoods')}</AppText>
-        </Card>
-      ) : (
-        foods.map((item) => (
-          <Card key={item.food.id}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setSelected(item)}
-              style={styles.foodRow}
-            >
-              <View style={styles.grow}>
-                <AppText variant="subtitle">{item.food.name}</AppText>
-                <AppText variant="caption" muted>
-                  {item.food.brand ? `${item.food.brand} · ` : ''}
-                  {item.serving.description} · {Math.round(item.serving.calories)} kcal
-                </AppText>
-              </View>
-              <AppText>{item.food.isFavorite ? '★' : '☆'}</AppText>
-            </Pressable>
-            <View style={styles.smallActions}>
-              <Button
-                label={item.food.isFavorite ? '★' : '☆'}
-                variant="ghost"
-                onPress={() => {
-                  void service.toggleFavorite(item).then(load);
-                }}
-              />
-              <Button
-                label={t('common.edit')}
-                variant="ghost"
-                onPress={() =>
-                  router.push({ pathname: '/food-form', params: { id: item.food.id } })
-                }
-              />
-              <Button label={t('common.delete')} variant="ghost" onPress={() => archive(item)} />
+      {feedback ? <InlineNotice tone="success">{feedback}</InlineNotice> : null}
+
+      {MEALS.map((type) => {
+        const mealEntries = groups[type] ?? [];
+        const totals = totalNutrition(mealEntries);
+        return (
+          <View key={type} style={styles.section}>
+            <View style={styles.mealHeader}>
+              <AppText variant="subtitle">{t(`journal.${type}`)}</AppText>
+              <AppText variant="label" muted>
+                {mealEntries.length ? `${Math.round(totals.calories)} kcal` : '—'}
+              </AppText>
             </View>
-          </Card>
-        ))
-      )}
-      {MEALS.map((type) => (
-        <View key={type} style={styles.section}>
-          <SectionHeader title={t(`journal.${type}`)} />
-          <Card>
-            {(groups[type] ?? []).length === 0 ? (
-              <AppText muted>{t('journal.emptyMeal')}</AppText>
-            ) : (
-              (groups[type] ?? []).map((entry) => {
+            <Card style={styles.mealCard}>
+              {mealEntries.map((entry) => {
                 const values = scaleNutrition(entry.snapshot, entry.quantity);
                 return (
                   <View key={entry.id} style={[styles.logRow, { borderBottomColor: theme.border }]}>
                     <View style={styles.grow}>
                       <AppText>{entry.snapshot.foodName}</AppText>
                       <AppText variant="caption" muted>
-                        {entry.quantity} × {entry.snapshot.servingDescription} ·{' '}
+                        {Math.round(entry.snapshot.servingGrams * entry.quantity)} g ·{' '}
                         {Math.round(values.calories)} kcal
                       </AppText>
                     </View>
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={t('common.delete')}
-                      onPress={() => {
-                        void service.removeFoodLogEntry(entry.id).then(load);
-                      }}
+                      hitSlop={10}
+                      onPress={() => void service.removeFoodLogEntry(entry.id).then(load)}
                     >
                       <AppText style={{ color: theme.danger }}>×</AppText>
                     </Pressable>
                   </View>
                 );
-              })
-            )}
-            <View style={styles.stack}>
+              })}
+              {!mealEntries.length ? (
+                <AppText variant="caption" muted>
+                  {t('journal.emptyMeal')}
+                </AppText>
+              ) : null}
               <Button
-                label={t('journal.duplicateYesterday')}
-                variant="secondary"
-                onPress={() => void duplicate(type)}
+                label={`+ ${t('journal.addFood')}`}
+                onPress={() =>
+                  router.push({
+                    pathname: '/add-food',
+                    params: { mealType: type, localDate: today },
+                  })
+                }
               />
-              <Button label={t('journal.saveMeal')} variant="ghost" onPress={() => setMeal(type)} />
-            </View>
-          </Card>
-        </View>
-      ))}
-      <SectionHeader title={t('journal.savedMeals')} />
-      <Card>
-        <Field label={t('journal.mealName')} value={mealName} onChangeText={setMealName} />
-        <ChoiceRow
-          value={meal}
-          onChange={setMeal}
-          options={MEALS.map((value) => ({ value, label: t(`journal.${value}`) }))}
-        />
-        <Button
-          label={t('journal.saveMeal')}
-          onPress={() => void saveMeal()}
-          disabled={!mealName.trim()}
-        />
-      </Card>
-      {templates.map((template) => (
-        <Card key={template.id}>
-          <AppText variant="subtitle">{template.name}</AppText>
-          <AppText muted>{t('journal.itemCount', { count: template.items.length })}</AppText>
-          <Button
-            label={t('journal.logMeal')}
-            variant="secondary"
-            onPress={() => {
-              void service.logMealTemplate(template, meal).then(load);
-            }}
-          />
-        </Card>
-      ))}
-      <Modal
-        visible={Boolean(selected)}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelected(null)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modal, { backgroundColor: theme.surface }]}>
-            <AppText variant="title">{selected?.food.name}</AppText>
-            <Field
-              label={t('journal.quantity')}
-              keyboardType="decimal-pad"
-              value={quantity}
-              onChangeText={setQuantity}
-            />
-            <AppText variant="label">{t('journal.meal')}</AppText>
-            <ChoiceRow
-              value={meal}
-              onChange={setMeal}
-              options={MEALS.map((value) => ({ value, label: t(`journal.${value}`) }))}
-            />
-            <Button label={t('journal.addToJournal')} onPress={() => void logSelected()} />
-            <Button label={t('common.cancel')} variant="ghost" onPress={() => setSelected(null)} />
+              {duplicable.includes(type) || mealEntries.length ? (
+                <View style={styles.secondaryActions}>
+                  {duplicable.includes(type) ? (
+                    <Button
+                      label={t('journal.duplicateYesterday')}
+                      variant="secondary"
+                      onPress={() => void duplicate(type)}
+                    />
+                  ) : null}
+                  {mealEntries.length ? (
+                    <Button
+                      label={t('journal.saveMeal')}
+                      variant="ghost"
+                      onPress={() => {
+                        setSavingMeal(type);
+                        setMealName('');
+                      }}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {savingMeal === type ? (
+                <View style={styles.saveMeal}>
+                  <Field
+                    label={t('journal.mealName')}
+                    value={mealName}
+                    onChangeText={setMealName}
+                    autoFocus
+                  />
+                  <Button
+                    label={t('journal.saveMeal')}
+                    disabled={!mealName.trim()}
+                    onPress={() => void saveMeal(type)}
+                  />
+                  <Button
+                    label={t('common.cancel')}
+                    variant="ghost"
+                    onPress={() => setSavingMeal(null)}
+                  />
+                </View>
+              ) : null}
+            </Card>
           </View>
-        </View>
-      </Modal>
+        );
+      })}
+
+      {templates.length ? (
+        <>
+          <SectionHeader title={t('journal.savedMeals')} />
+          <ChoiceRow
+            value={templateMeal}
+            onChange={setTemplateMeal}
+            options={MEALS.map((value) => ({ value, label: t(`journal.${value}`) }))}
+          />
+          {templates.map((template) => (
+            <Card key={template.id} style={styles.templateCard}>
+              <View style={styles.templateRow}>
+                <View style={styles.grow}>
+                  <AppText variant="subtitle">{template.name}</AppText>
+                  <AppText variant="caption" muted>
+                    {t('journal.itemCount', { count: template.items.length })}
+                  </AppText>
+                </View>
+                <Button
+                  label={t('journal.logMeal')}
+                  variant="secondary"
+                  onPress={() => void service.logMealTemplate(template, templateMeal).then(load)}
+                />
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  foodRow: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: 10 },
-  grow: { flex: 1 },
-  smallActions: { flexDirection: 'row', gap: 6 },
   section: { gap: 8 },
+  mealHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  mealCard: { padding: 14, gap: 8 },
+  grow: { flex: 1 },
   logRow: {
     minHeight: 48,
-    paddingVertical: 9,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  stack: { gap: 8, marginTop: 8 },
-  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
-  modal: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 22,
-    gap: 16,
-    maxHeight: '85%',
-  },
+  secondaryActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  saveMeal: { gap: 8, paddingTop: 6 },
+  templateCard: { paddingVertical: 12 },
+  templateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 });

@@ -1,5 +1,15 @@
 export type UUID = string;
 
+declare const barcodeBrand: unique symbol;
+export type Barcode = string & { readonly [barcodeBrand]: true };
+export type BarcodeFormat = 'ean13' | 'ean8' | 'upc_a' | 'upc_e';
+
+export interface NormalizedBarcode {
+  value: Barcode;
+  format: BarcodeFormat;
+  canonicalKey: string;
+}
+
 declare const localDateBrand: unique symbol;
 export type LocalDate = string & { readonly [localDateBrand]: true };
 
@@ -63,13 +73,26 @@ export interface NutritionValues {
   sodiumMg: number | null;
 }
 
+export type NutrientKey = keyof NutritionValues;
+export type NutritionAvailability = Record<NutrientKey, boolean>;
+export type FoodSource = 'custom' | 'seed' | 'external';
+export type FoodVerificationStatus = 'not_applicable' | 'reviewed' | 'edited';
+
 export interface Food {
   id: UUID;
   name: string;
   normalizedName: string;
   brand: string | null;
   isFavorite: boolean;
-  source: 'custom' | 'seed';
+  source: FoodSource;
+  barcode: Barcode | null;
+  barcodeFormat: BarcodeFormat | null;
+  barcodeKey: string | null;
+  providerId: string | null;
+  externalId: string | null;
+  sourceUpdatedAtUtc: string | null;
+  importedAtUtc: string | null;
+  verificationStatus: FoodVerificationStatus;
   archivedAtUtc: string | null;
   createdAtUtc: string;
   updatedAtUtc: string;
@@ -80,6 +103,7 @@ export interface FoodServing extends NutritionValues {
   foodId: UUID;
   description: string;
   grams: number;
+  knownNutrients: NutritionAvailability;
 }
 
 export interface FoodWithServing {
@@ -92,6 +116,7 @@ export interface FoodLogSnapshot extends NutritionValues {
   brand: string | null;
   servingDescription: string;
   servingGrams: number;
+  knownNutrients: NutritionAvailability;
 }
 
 export interface FoodLogEntry {
@@ -126,7 +151,16 @@ export interface FoodDraft extends NutritionValues {
   brand: string | null;
   servingDescription: string;
   servingGrams: number;
+  knownNutrients?: NutritionAvailability;
+  barcode?: NormalizedBarcode | null;
+  providerId?: string | null;
+  externalId?: string | null;
+  sourceUpdatedAtUtc?: string | null;
+  importedAtUtc?: string | null;
+  verificationStatus?: FoodVerificationStatus;
 }
+
+export type LogQuantity = { kind: 'servings'; count: number } | { kind: 'grams'; grams: number };
 
 export interface ProfileDraft {
   nickname: string;

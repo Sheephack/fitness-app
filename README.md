@@ -1,6 +1,6 @@
 # Fitness App
 
-A calm, local-first nutrition and weight companion focused on answering: **what should I do next today?** Release 0 and Release 1 provide private onboarding, manual nutrition goals, custom foods, a daily journal, deterministic balance guidance, and weight trends.
+A calm, local-first nutrition and weight companion focused on answering: **what should I do next today?** Release 1.1 adds fast food logging: compact meals, recents, favorites, saved meals, barcode scanning, and an optional Open Food Facts lookup.
 
 ## Architecture
 
@@ -37,13 +37,19 @@ Scan the QR code with Expo Go. If the phone cannot reach the development server,
 
 Native data stays in `fitness-app.db` through `expo-sqlite`. There is no account, backend, analytics, advertising, or silent upload. Web intentionally uses an in-memory preview adapter and displays that limitation.
 
+When a new EAN/UPC barcode is scanned, the app checks local SQLite first. Only a local miss calls Open Food Facts v3 with the barcode, selected product fields, and an identifiable app user agent. A product is never stored automatically: the user reviews it first. Once saved, it is local and works offline. Read the data and attribution limits in [docs/PRIVACY.md](docs/PRIVACY.md).
+
+`expo-camera ~17.0.10` is the only new runtime dependency in 0.1.1. It adds native camera/barcode support for iPhone Expo Go; the web preview retains manual barcode input and does not require browser camera support.
+
 ## Localization
 
 Spanish and English are supported from first launch. Interface language, locale, and metric/imperial units are separate preferences. Visible copy and Daily Balance output are localized from semantic keys.
 
 ## Roadmap
 
-Only Release 0 and Release 1 are implemented. See [docs/ROADMAP.md](docs/ROADMAP.md) for later ideas and prerequisites.
+Release 0, Release 1, and the Release 1.1 fast-logging pass are implemented in code. Physical iPhone scanner/cache acceptance remains a manual validation gate. See [docs/ROADMAP.md](docs/ROADMAP.md) for later ideas and prerequisites.
+
+Use [the Release 1.1 acceptance checklist](docs/ACCEPTANCE_RELEASE_1_1.md) for the final Expo Go pass.
 
 ## Dependency status
 

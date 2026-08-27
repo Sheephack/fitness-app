@@ -1,4 +1,4 @@
-import { totalNutrition } from './nutrition';
+import { ALL_NUTRIENTS_KNOWN, totalNutrition } from './nutrition';
 import { parseLocalDate } from './localDate';
 import type { FoodLogEntry } from './types';
 
@@ -17,6 +17,7 @@ describe('nutrition snapshots', () => {
         brand: null,
         servingDescription: '1 unidad',
         servingGrams: 200,
+        knownNutrients: ALL_NUTRIENTS_KNOWN,
         calories: 520,
         proteinG: 30,
         carbsG: 40,

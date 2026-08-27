@@ -2,7 +2,7 @@
   "expo": {
     "name": "Fitness App",
     "slug": "fitness-app",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "fitnessapp",
@@ -26,6 +26,10 @@
       "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
+    "locales": {
+      "es": "./locales/es.json",
+      "en": "./locales/en.json"
+    },
     "plugins": [
       "expo-router",
       "expo-localization",
@@ -42,6 +46,13 @@
         }
       ],
       "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Fitness App to use the camera to scan product barcodes.",
+          "recordAudioAndroid": false
+        }
+      ],
       "@react-native-community/datetimepicker"
     ],
     "experiments": {

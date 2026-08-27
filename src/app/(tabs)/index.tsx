@@ -3,7 +3,15 @@ import { View, StyleSheet } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import type { DashboardData } from '@/application/FitnessService';
-import { AppText, Button, Card, ProgressBar, Screen, SectionHeader } from '@/components/ui';
+import {
+  AppText,
+  Button,
+  Card,
+  InlineNotice,
+  ProgressBar,
+  Screen,
+  SectionHeader,
+} from '@/components/ui';
 import { kgToDisplay, roundTo } from '@/domain/units';
 import type { Settings } from '@/domain/types';
 import { useFitnessService } from '@/providers/servicesContext';
@@ -72,11 +80,15 @@ export default function HomeScreen() {
           <View style={styles.grid}>
             <Metric
               label={t('home.calories')}
-              value={number.format(data.totals.calories)}
+              value={data.nutritionComplete.calories ? number.format(data.totals.calories) : '—'}
               target={t('home.target', {
                 value: `${number.format(data.goals.caloriesTarget)} ${t('common.kcal')}`,
               })}
-              progress={data.totals.calories / data.goals.caloriesTarget}
+              progress={
+                data.nutritionComplete.calories
+                  ? data.totals.calories / data.goals.caloriesTarget
+                  : 0
+              }
             />
             {(
               [
@@ -89,33 +101,41 @@ export default function HomeScreen() {
               <Metric
                 key={name}
                 label={t(`home.${name}`)}
-                value={`${number.format(data.totals[key])} g`}
+                value={data.nutritionComplete[key] ? `${number.format(data.totals[key])} g` : '—'}
                 target={t('home.range', {
                   min: number.format(data.goals![name].min),
                   max: number.format(data.goals![name].max),
                 })}
-                progress={data.totals[key] / data.goals![name].max}
+                progress={
+                  data.nutritionComplete[key] ? data.totals[key] / data.goals![name].max : 0
+                }
               />
             ))}
           </View>
           <SectionHeader title={t('home.balanceTitle')} />
-          <Card>
-            {data.balance?.insights.map((code) => (
-              <AppText key={code}>{t(`balance.${code}`)}</AppText>
-            ))}
-          </Card>
-          <SectionHeader title={t('home.nextMoveTitle')} />
-          <Card>
-            <AppText variant="subtitle">{t(`balance.${data.balance?.nextMove.code}`)}</AppText>
-            {data.balance?.nextMove.proteinLowerG ? (
-              <AppText muted>
-                {t('balance.proteinAmount', {
-                  lower: data.balance.nextMove.proteinLowerG,
-                  upper: data.balance.nextMove.proteinUpperG,
-                })}
-              </AppText>
-            ) : null}
-          </Card>
+          {data.balance ? (
+            <>
+              <Card>
+                {data.balance.insights.map((code) => (
+                  <AppText key={code}>{t(`balance.${code}`)}</AppText>
+                ))}
+              </Card>
+              <SectionHeader title={t('home.nextMoveTitle')} />
+              <Card>
+                <AppText variant="subtitle">{t(`balance.${data.balance.nextMove.code}`)}</AppText>
+                {data.balance.nextMove.proteinLowerG ? (
+                  <AppText muted>
+                    {t('balance.proteinAmount', {
+                      lower: data.balance.nextMove.proteinLowerG,
+                      upper: data.balance.nextMove.proteinUpperG,
+                    })}
+                  </AppText>
+                ) : null}
+              </Card>
+            </>
+          ) : (
+            <InlineNotice tone="warning">{t('home.partialNutrition')}</InlineNotice>
+          )}
         </>
       ) : (
         <Card>

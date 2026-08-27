@@ -1,8 +1,10 @@
 import { createContext, useContext } from 'react';
 import type { FitnessService } from '@/application/FitnessService';
+import type { BarcodeResolver } from '@/application/BarcodeResolver';
 
 export interface ServicesContextValue {
   service: FitnessService;
+  barcodeResolver: BarcodeResolver;
   previewMode: boolean;
 }
 

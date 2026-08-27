@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { AppText, Button, Card, ChoiceRow, Field, Screen } from '@/components/ui';
 import { DateField } from '@/components/DateField';
 import { parseLocalDate } from '@/domain/localDate';
+import { parseDecimalInput } from '@/domain/numericInput';
 import { cmToDisplay, displayToCm, displayToKg, kgToDisplay, roundTo } from '@/domain/units';
 import type { ActivityLevel, GoalType, UnitSystem } from '@/domain/types';
 import { useFitnessService } from '@/providers/servicesContext';
@@ -40,13 +41,24 @@ export default function OnboardingScreen() {
             return false;
           }
         }, t('onboarding.invalidDate')),
-        height: z.string().refine((value) => Number(value) > 0, t('onboarding.positive')),
-        currentWeight: z.string().refine((value) => Number(value) > 0, t('onboarding.positive')),
-        targetWeight: z.string().refine((value) => Number(value) > 0, t('onboarding.positive')),
+        height: z
+          .string()
+          .refine((value) => (parseDecimalInput(value) ?? 0) > 0, t('onboarding.positive')),
+        currentWeight: z
+          .string()
+          .refine((value) => (parseDecimalInput(value) ?? 0) > 0, t('onboarding.positive')),
+        targetWeight: z
+          .string()
+          .refine((value) => (parseDecimalInput(value) ?? 0) > 0, t('onboarding.positive')),
         units: z.enum(['metric', 'imperial']),
         activity: z.enum(['sedentary', 'light', 'moderate', 'high']),
         goal: z.enum(['lose', 'maintain', 'gain']),
-        pace: z.string(),
+        pace: z
+          .string()
+          .refine(
+            (value) => value.trim() === '' || (parseDecimalInput(value) ?? 0) > 0,
+            t('onboarding.positive'),
+          ),
       }),
     [t],
   );
@@ -107,8 +119,8 @@ export default function OnboardingScreen() {
       field: 'height' | 'currentWeight' | 'targetWeight' | 'pace',
       kind: 'height' | 'weight',
     ) => {
-      const raw = Number(getValues(field));
-      if (!Number.isFinite(raw) || raw <= 0) return;
+      const raw = parseDecimalInput(getValues(field));
+      if (raw === null || !Number.isFinite(raw) || raw <= 0) return;
       const canonical = kind === 'height' ? displayToCm(raw, previous) : displayToKg(raw, previous);
       const displayed =
         kind === 'height' ? cmToDisplay(canonical, next) : kgToDisplay(canonical, next);
@@ -122,17 +134,25 @@ export default function OnboardingScreen() {
   };
 
   const submit = handleSubmit(async (values) => {
+    const targetPace = parseDecimalInput(values.pace);
     await service.saveProfile(
       {
         nickname: values.nickname,
         birthDate: parseLocalDate(values.birthDate),
-        heightCm: displayToCm(Number(values.height), values.units),
-        currentWeightKg: displayToKg(Number(values.currentWeight), values.units),
-        targetWeightKg: displayToKg(Number(values.targetWeight), values.units),
+        heightCm: displayToCm(parseDecimalInput(values.height) as number, values.units),
+        currentWeightKg: displayToKg(
+          parseDecimalInput(values.currentWeight) as number,
+          values.units,
+        ),
+        targetWeightKg: displayToKg(parseDecimalInput(values.targetWeight) as number, values.units),
         activityLevel: values.activity,
         goalType: values.goal,
         targetPaceKgPerWeek:
-          values.goal === 'maintain' ? null : displayToKg(Number(values.pace), values.units),
+          values.goal === 'maintain'
+            ? null
+            : targetPace === null
+              ? null
+              : displayToKg(targetPace, values.units),
         unitSystem: values.units,
       },
       !editing,

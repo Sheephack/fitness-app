@@ -2,7 +2,17 @@ import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { AppText, Button, Card, Field, ProgressBar, Screen, SectionHeader } from '@/components/ui';
+import {
+  AppText,
+  Button,
+  Card,
+  Field,
+  InlineNotice,
+  ProgressBar,
+  Screen,
+  SectionHeader,
+} from '@/components/ui';
+import { parseDecimalInput } from '@/domain/numericInput';
 import { displayToKg, kgToDisplay, roundTo } from '@/domain/units';
 import { calculateWeightSummary, type WeightSummary } from '@/domain/weightTrend';
 import type { Profile, Settings, WeightEntry } from '@/domain/types';
@@ -17,6 +27,7 @@ export default function WeightScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [summary, setSummary] = useState<WeightSummary | null>(null);
+  const [saved, setSaved] = useState(false);
   const load = useCallback(() => {
     Promise.all([service.listWeights(), service.getSettings(), service.getProfile()]).then(
       ([items, currentSettings, currentProfile]) => {
@@ -41,16 +52,19 @@ export default function WeightScreen() {
   const unit = settings.unitSystem === 'metric' ? t('common.kg') : t('common.lb');
   const format = (kg: number) => `${roundTo(kgToDisplay(kg, settings.unitSystem), 1)} ${unit}`;
   const add = async () => {
-    if (Number(weight) <= 0) return;
-    await service.addWeight(displayToKg(Number(weight), settings.unitSystem), note);
+    const parsed = parseDecimalInput(weight);
+    if (parsed === null || parsed <= 0) return;
+    await service.addWeight(displayToKg(parsed, settings.unitSystem), note);
     setWeight('');
     setNote('');
+    setSaved(true);
     load();
   };
   return (
     <Screen>
       <AppText variant="display">{t('weight.title')}</AppText>
       <AppText muted>{t('weight.subtitle')}</AppText>
+      {saved ? <InlineNotice tone="success">{t('feedback.weightLogged')}</InlineNotice> : null}
       <Card>
         <Field
           label={`${t('weight.add')} (${unit})`}
@@ -59,7 +73,11 @@ export default function WeightScreen() {
           onChangeText={setWeight}
         />
         <Field label={t('weight.note')} value={note} onChangeText={setNote} />
-        <Button label={t('weight.add')} onPress={() => void add()} disabled={Number(weight) <= 0} />
+        <Button
+          label={t('weight.add')}
+          onPress={() => void add()}
+          disabled={(parseDecimalInput(weight) ?? 0) <= 0}
+        />
       </Card>
       {summary?.latest ? (
         <>

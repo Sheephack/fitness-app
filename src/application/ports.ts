@@ -6,11 +6,40 @@ import type {
   MealTemplate,
   MealType,
   NutritionGoals,
+  NormalizedBarcode,
+  NutritionAvailability,
+  NutritionValues,
   Profile,
   Settings,
   UUID,
   WeightEntry,
 } from '@/domain/types';
+
+export interface ExternalFoodProduct {
+  barcode: NormalizedBarcode;
+  name: string | null;
+  brand: string | null;
+  quantityDescription: string | null;
+  servingDescription: string | null;
+  servingGrams: number | null;
+  basis: 'per_100g' | 'per_serving' | 'unsupported_volume' | 'unknown';
+  nutrition: NutritionValues;
+  knownNutrients: NutritionAvailability;
+  externalId: string;
+  sourceUpdatedAtUtc: string | null;
+}
+
+export type FoodProductProviderResult =
+  | { kind: 'found'; product: ExternalFoodProduct }
+  | { kind: 'not_found' }
+  | {
+      kind: 'unavailable';
+      reason: 'offline' | 'timeout' | 'rate_limited' | 'server' | 'invalid_response';
+    };
+
+export interface FoodProductProvider {
+  findByBarcode(barcode: NormalizedBarcode): Promise<FoodProductProviderResult>;
+}
 
 export interface SettingsRepository {
   get(): Promise<Settings | null>;
@@ -35,7 +64,9 @@ export interface NutritionGoalsRepository {
 export interface FoodRepository {
   list(query?: string): Promise<FoodWithServing[]>;
   listRecent(limit: number): Promise<FoodWithServing[]>;
+  listFavorites(limit: number): Promise<FoodWithServing[]>;
   get(id: UUID): Promise<FoodWithServing | null>;
+  findByBarcode(canonicalKey: string): Promise<FoodWithServing | null>;
   create(id: UUID, servingId: UUID, draft: FoodDraft, nowUtc: string): Promise<FoodWithServing>;
   update(id: UUID, draft: FoodDraft, nowUtc: string): Promise<FoodWithServing>;
   setFavorite(id: UUID, favorite: boolean, nowUtc: string): Promise<void>;

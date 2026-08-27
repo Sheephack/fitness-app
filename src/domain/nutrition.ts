@@ -1,4 +1,34 @@
-import type { FoodLogEntry, NutritionValues } from './types';
+import type {
+  FoodLogEntry,
+  FoodServing,
+  LogQuantity,
+  NutrientKey,
+  NutritionAvailability,
+  NutritionValues,
+} from './types';
+
+export const NUTRIENT_KEYS: NutrientKey[] = [
+  'calories',
+  'proteinG',
+  'carbsG',
+  'fatG',
+  'fiberG',
+  'sodiumMg',
+];
+
+export const ALL_NUTRIENTS_KNOWN: NutritionAvailability = {
+  calories: true,
+  proteinG: true,
+  carbsG: true,
+  fatG: true,
+  fiberG: true,
+  sodiumMg: true,
+};
+
+export interface NutritionSummary {
+  values: NutritionValues;
+  complete: NutritionAvailability;
+}
 
 export const EMPTY_NUTRITION: NutritionValues = {
   calories: 0,
@@ -20,6 +50,30 @@ export function scaleNutrition(values: NutritionValues, quantity: number): Nutri
   };
 }
 
+export function nutritionAvailabilityToMask(availability: NutritionAvailability): number {
+  return NUTRIENT_KEYS.reduce((mask, key, index) => mask | (availability[key] ? 1 << index : 0), 0);
+}
+
+export function nutritionAvailabilityFromMask(mask: number): NutritionAvailability {
+  return Object.fromEntries(
+    NUTRIENT_KEYS.map((key, index) => [key, (mask & (1 << index)) !== 0]),
+  ) as unknown as NutritionAvailability;
+}
+
+export function resolveLogQuantity(
+  serving: FoodServing,
+  input: LogQuantity,
+): { multiplier: number; grams: number; values: NutritionValues } | null {
+  const amount = input.kind === 'servings' ? input.count : input.grams;
+  if (!Number.isFinite(amount) || amount <= 0 || serving.grams <= 0) return null;
+  const multiplier = input.kind === 'servings' ? input.count : input.grams / serving.grams;
+  return {
+    multiplier,
+    grams: serving.grams * multiplier,
+    values: scaleNutrition(serving, multiplier),
+  };
+}
+
 export function totalNutrition(entries: FoodLogEntry[]): NutritionValues {
   return entries.reduce<NutritionValues>((total, entry) => {
     const scaled = scaleNutrition(entry.snapshot, entry.quantity);
@@ -35,6 +89,18 @@ export function totalNutrition(entries: FoodLogEntry[]): NutritionValues {
           : (total.sodiumMg ?? 0) + (scaled.sodiumMg ?? 0),
     };
   }, EMPTY_NUTRITION);
+}
+
+export function summarizeNutrition(entries: FoodLogEntry[]): NutritionSummary {
+  return {
+    values: totalNutrition(entries),
+    complete: Object.fromEntries(
+      NUTRIENT_KEYS.map((key) => [
+        key,
+        entries.every((entry) => entry.snapshot.knownNutrients[key]),
+      ]),
+    ) as unknown as NutritionAvailability,
+  };
 }
 
 export function normalizeFoodSearch(value: string): string {

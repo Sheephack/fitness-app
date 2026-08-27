@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 2;
 
 export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
@@ -129,10 +129,37 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
         );
       `);
     }
+    if (currentVersion < 2) {
+      await db.execAsync(`
+        ALTER TABLE foods ADD COLUMN barcode TEXT;
+        ALTER TABLE foods ADD COLUMN barcode_format TEXT
+          CHECK (barcode_format IS NULL OR barcode_format IN ('ean13','ean8','upc_a','upc_e'));
+        ALTER TABLE foods ADD COLUMN barcode_key TEXT;
+        ALTER TABLE foods ADD COLUMN provider_id TEXT;
+        ALTER TABLE foods ADD COLUMN external_id TEXT;
+        ALTER TABLE foods ADD COLUMN source_updated_at_utc TEXT;
+        ALTER TABLE foods ADD COLUMN imported_at_utc TEXT;
+        ALTER TABLE foods ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'not_applicable'
+          CHECK (verification_status IN ('not_applicable','reviewed','edited'));
+        ALTER TABLE foods ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+        UPDATE foods
+          SET search_text = trim(normalized_name || ' ' || lower(COALESCE(brand, '')));
+
+        ALTER TABLE food_servings
+          ADD COLUMN known_nutrients_mask INTEGER NOT NULL DEFAULT 63;
+        ALTER TABLE food_log_entries
+          ADD COLUMN snapshot_known_nutrients_mask INTEGER NOT NULL DEFAULT 63;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_foods_active_barcode
+          ON foods(barcode_key)
+          WHERE barcode_key IS NOT NULL AND archived_at_utc IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_foods_search_text ON foods(search_text);
+      `);
+    }
     await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
   });
 }
 
 export function plannedMigrationVersions(currentVersion: number): number[] {
-  return currentVersion < 1 ? [1] : [];
+  return [1, 2].filter((version) => version > currentVersion);
 }

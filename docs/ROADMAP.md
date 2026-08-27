@@ -2,11 +2,11 @@
 
 ## Current
 
-Release 0 and Release 1 are the only implementation scope. They must pass the full Expo Go acceptance flow before expansion.
+Release 0 and Release 1 are implemented. Release 1.1 adds a local-first barcode-first flow: camera/manual EAN/UPC input, local cache resolution, user-reviewed Open Food Facts imports, compact meals, recents, favorites, saved meals, and quantity previews. Its final gate is a physical iPhone Expo Go scan, local re-scan while offline, reopen persistence, and both ES/EN themes.
 
 ## Later, not implemented
 
-- **Release 2:** adaptive nutrition targets, micronutrients, barcode-first lookup and optional open food sources.
+- **Release 2:** adaptive nutrition targets and micronutrients.
 - **Release 3:** workouts, exercise history and progressive overload.
 - **Release 4:** optional, granular HealthKit integration.
 - **Release 5:** consent-based personal coach receiving structured summaries only.
