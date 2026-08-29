@@ -37,7 +37,7 @@ function openDatabase(): NodeSqlite {
 }
 
 describe('SQLite schema migrations', () => {
-  test('migrates a v1 fixture to v2 without changing its history', async () => {
+  test('migrates a v1 fixture to v4 without changing its history', async () => {
     const database = openDatabase();
     database.exec(`
       CREATE TABLE foods (
@@ -65,7 +65,7 @@ describe('SQLite schema migrations', () => {
       PRAGMA user_version = 1;
     `);
     await migrateDatabase(nodeAdapter(database));
-    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 2 });
+    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 });
     expect(
       database.prepare("SELECT name, search_text, barcode_key FROM foods WHERE id='food-1'").get(),
     ).toEqual({
@@ -76,16 +76,22 @@ describe('SQLite schema migrations', () => {
     expect(
       database
         .prepare(
-          "SELECT snapshot_calories, snapshot_known_nutrients_mask FROM food_log_entries WHERE id='log-1'",
+          "SELECT snapshot_calories, snapshot_known_nutrients_mask, quantity_amount, quantity_unit, snapshot_nutrition_basis_unit FROM food_log_entries WHERE id='log-1'",
         )
         .get(),
-    ).toEqual({ snapshot_calories: 20, snapshot_known_nutrients_mask: 63 });
+    ).toEqual({
+      snapshot_calories: 20,
+      snapshot_known_nutrients_mask: 63,
+      quantity_amount: 100,
+      quantity_unit: 'grams',
+      snapshot_nutrition_basis_unit: 'g',
+    });
     await migrateDatabase(nodeAdapter(database));
     expect(database.prepare('SELECT count(*) AS count FROM foods').get()).toEqual({ count: 1 });
     database.close();
   });
 
-  test('runs empty installation through v1 and v2', async () => {
+  test('runs empty installation through v1, v2, v3, and v4', async () => {
     const database = openDatabase();
     await migrateDatabase(nodeAdapter(database));
     expect(
@@ -98,6 +104,18 @@ describe('SQLite schema migrations', () => {
         )
         .get(),
     ).toEqual({ name: 'idx_foods_active_barcode' });
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='food_aliases'")
+        .get(),
+    ).toEqual({ name: 'food_aliases' });
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='food_last_quantities'",
+        )
+        .get(),
+    ).toEqual({ name: 'food_last_quantities' });
     database.close();
   });
 });

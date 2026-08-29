@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as Haptics from 'expo-haptics';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +22,8 @@ import type {
 } from '@/domain/types';
 import { useFitnessService } from '@/providers/servicesContext';
 import { useAppTheme } from '@/theme/theme';
+import { suggestMealType } from '@/application/mealSuggestion';
+import { displayFoodName } from '@/catalog/presentation';
 
 type PickerMode = 'search' | 'recent' | 'favorites' | 'templates';
 type Step = 'picker' | 'scanner' | 'review' | 'quantity';
@@ -56,24 +59,26 @@ function candidateForm(product: ExternalFoodProduct): ReviewForm {
 }
 
 export default function AddFoodScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const theme = useAppTheme();
   const { service, barcodeResolver } = useFitnessService();
   const params = useLocalSearchParams<{
     mealType?: string;
     localDate?: string;
     selectedId?: string;
+    start?: string;
+    express?: string;
   }>();
   const mealType = (
     ['breakfast', 'lunch', 'snack', 'dinner', 'other'].includes(params.mealType ?? '')
       ? params.mealType
-      : 'breakfast'
+      : suggestMealType(new Date().getHours())
   ) as MealType;
   const localDate: LocalDate = params.localDate
     ? parseLocalDate(params.localDate)
     : localDateFromDate(new Date());
 
-  const [step, setStep] = useState<Step>('picker');
+  const [step, setStep] = useState<Step>(params.start === 'scanner' ? 'scanner' : 'picker');
   const [mode, setMode] = useState<PickerMode>('recent');
   const [query, setQuery] = useState('');
   const [foods, setFoods] = useState<FoodWithServing[]>([]);
@@ -92,6 +97,7 @@ export default function AddFoodScreen() {
     'neutral',
   );
   const [quantityMode, setQuantityMode] = useState<'servings' | 'grams'>('servings');
+  const [selectedMealType, setSelectedMealType] = useState<MealType>(mealType);
   const [quantity, setQuantity] = useState('1');
   const [saving, setSaving] = useState(false);
 
@@ -121,11 +127,23 @@ export default function AddFoodScreen() {
     });
   }, [params.selectedId, service]);
 
-  const choose = (food: FoodWithServing) => {
+  const choose = (food: FoodWithServing, fromScanner = false) => {
     setSelected(food);
     setQuantityMode('servings');
     setQuantity('1');
     setStep('quantity');
+    void service.getLastFoodQuantity(food.food.id).then((last) => {
+      if (!last || last.unit === 'milliliters') return;
+      setQuantityMode(last.unit);
+      setQuantity(String(last.amount));
+    });
+    if (fromScanner) {
+      setTimeout(() => {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+          () => undefined,
+        );
+      }, 120);
+    }
   };
 
   const resolveBarcode = async (raw: string, format?: BarcodeFormat) => {
@@ -142,7 +160,7 @@ export default function AddFoodScreen() {
     if (result.kind === 'local') {
       setNotice(t('scanner.foundLocal'));
       setNoticeTone('success');
-      choose(result.food);
+      choose(result.food, true);
       return;
     }
     if (result.kind === 'remote') {
@@ -254,11 +272,15 @@ export default function AddFoodScreen() {
     if (!selected || !quantityInput) return;
     setSaving(true);
     try {
-      await service.logFoodQuantity(selected, mealType, quantityInput, localDate);
-      router.replace({
-        pathname: '/(tabs)/journal',
-        params: { feedback: 'food_logged' },
-      });
+      await service.logFoodQuantity(selected, selectedMealType, quantityInput, localDate);
+      if (params.express === '1') {
+        router.replace('/(tabs)');
+      } else {
+        router.replace({
+          pathname: '/(tabs)/journal',
+          params: { feedback: 'food_logged' },
+        });
+      }
     } finally {
       setSaving(false);
     }
@@ -273,6 +295,7 @@ export default function AddFoodScreen() {
 
   const list =
     mode === 'search' ? foods : mode === 'recent' ? recent : mode === 'favorites' ? favorites : [];
+  const displayLanguage = i18n.language === 'es' ? 'es' : 'en';
 
   return (
     <Screen>
@@ -344,7 +367,7 @@ export default function AddFoodScreen() {
                   style={styles.foodRow}
                 >
                   <View style={styles.grow}>
-                    <AppText variant="subtitle">{food.food.name}</AppText>
+                    <AppText variant="subtitle">{displayFoodName(food, displayLanguage)}</AppText>
                     <AppText variant="caption" muted>
                       {food.food.brand ? `${food.food.brand} · ` : ''}
                       {food.serving.description} · {Math.round(food.serving.calories)} kcal
@@ -481,6 +504,14 @@ export default function AddFoodScreen() {
                 { value: 'grams', label: t('quantity.grams') },
               ]}
             />
+            <ChoiceRow
+              value={selectedMealType}
+              onChange={setSelectedMealType}
+              options={['breakfast', 'lunch', 'snack', 'dinner'].map((value) => ({
+                value: value as MealType,
+                label: t('journal.' + value),
+              }))}
+            />
             <View style={styles.presets}>
               {(quantityMode === 'servings' ? ['1', '1.5'] : ['50', '100']).map((value) => (
                 <Pressable
@@ -506,7 +537,9 @@ export default function AddFoodScreen() {
           {preview ? (
             <Card>
               <AppText variant="subtitle">
-                {t('quantity.preview', { grams: Math.round(preview.grams) })}
+                {t('quantity.preview', {
+                  grams: Math.round(preview.grams ?? preview.milliliters ?? 0),
+                })}
               </AppText>
               <AppText variant="title">{Math.round(preview.values.calories)} kcal</AppText>
               <AppText muted>

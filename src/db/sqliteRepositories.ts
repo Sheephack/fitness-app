@@ -1,10 +1,14 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import type {
   AppRepositories,
+  CatalogFoodSeed,
+  CatalogRepository,
   DataMaintenanceRepository,
   FoodLogRepository,
   FoodRepository,
   IdGenerator,
+  LastFoodQuantityRepository,
+  LoggingPreferencesRepository,
   MealTemplateRepository,
   NutritionGoalsRepository,
   ProfileRepository,
@@ -27,6 +31,9 @@ import type {
   FoodLogEntry,
   FoodServing,
   FoodWithServing,
+  HeightMeasurement,
+  LastFoodQuantity,
+  LoggingPreferences,
   MealTemplate,
   NutritionGoals,
   Profile,
@@ -73,6 +80,11 @@ function mapFood(row: SqlRow): FoodWithServing {
     foodId: food.id,
     description: String(row.description),
     grams: Number(row.grams),
+    nutritionBasisAmount: Number(row.nutrition_basis_amount ?? row.grams),
+    nutritionBasisUnit:
+      row.nutrition_basis_unit === 'ml' || row.nutrition_basis_unit === 'serving'
+        ? row.nutrition_basis_unit
+        : 'g',
     knownNutrients: nutritionAvailabilityFromMask(Number(row.known_nutrients_mask ?? 63)),
     calories: Number(row.calories),
     proteinG: Number(row.protein_g),
@@ -85,7 +97,8 @@ function mapFood(row: SqlRow): FoodWithServing {
 }
 
 const FOOD_SELECT = `
-  SELECT f.*, s.id AS serving_id, s.description, s.grams, s.calories,
+  SELECT f.*, s.id AS serving_id, s.description, s.grams, s.nutrition_basis_amount,
+         s.nutrition_basis_unit, s.calories,
          s.protein_g, s.carbs_g, s.fat_g, s.fiber_g, s.sodium_mg
   FROM foods f
   JOIN food_servings s ON s.food_id = f.id
@@ -170,6 +183,17 @@ class SqliteProfileRepository implements ProfileRepository {
       profile.updatedAtUtc,
     );
   }
+  async listHeightMeasurements(profileId: UUID): Promise<HeightMeasurement[]> {
+    const rows = await this.db.getAllAsync<SqlRow>(
+      `SELECT value,measured_at_utc FROM body_measurements
+       WHERE profile_id=? AND kind='height_cm' ORDER BY measured_at_utc ASC`,
+      profileId,
+    );
+    return rows.map((row) => ({
+      valueCm: Number(row.value),
+      measuredAtUtc: String(row.measured_at_utc),
+    }));
+  }
 }
 
 class SqliteWeightRepository implements WeightRepository {
@@ -253,15 +277,33 @@ class SqliteFoodRepository implements FoodRepository {
          SELECT food_id, MAX(logged_at_utc) AS recent_at
          FROM food_log_entries WHERE food_id IS NOT NULL GROUP BY food_id
        ) recent ON recent.food_id=f.id
-       WHERE f.archived_at_utc IS NULL AND f.search_text LIKE ?
+       WHERE f.archived_at_utc IS NULL AND (
+         f.search_text LIKE ? OR EXISTS (
+           SELECT 1 FROM food_aliases alias
+           WHERE alias.food_id=f.id AND alias.normalized_value LIKE ?
+         )
+       )
        ORDER BY
-         CASE WHEN f.normalized_name=? THEN 0 WHEN f.normalized_name LIKE ? THEN 1 ELSE 2 END,
-         f.is_favorite DESC,
+         CASE WHEN f.is_favorite=1 THEN 0 WHEN f.source='seed' THEN 2 ELSE 1 END,
+         CASE
+           WHEN f.normalized_name=? OR EXISTS (
+             SELECT 1 FROM food_aliases alias
+             WHERE alias.food_id=f.id AND alias.normalized_value=?
+           ) THEN 0
+           WHEN f.normalized_name LIKE ? OR EXISTS (
+             SELECT 1 FROM food_aliases alias
+             WHERE alias.food_id=f.id AND alias.normalized_value LIKE ?
+           ) THEN 1
+           ELSE 2
+         END,
          CASE WHEN recent.recent_at IS NULL THEN 1 ELSE 0 END,
          recent.recent_at DESC,
          f.name COLLATE NOCASE ASC`,
       `%${normalized}%`,
+      `%${normalized}%`,
       normalized,
+      normalized,
+      `${normalized}%`,
       `${normalized}%`,
     );
     return rows.map(mapFood);
@@ -327,13 +369,16 @@ class SqliteFoodRepository implements FoodRepository {
       );
       await this.db.runAsync(
         `INSERT INTO food_servings (
-          id,food_id,description,grams,calories,protein_g,carbs_g,fat_g,fiber_g,sodium_mg,
+          id,food_id,description,grams,nutrition_basis_amount,nutrition_basis_unit,
+          calories,protein_g,carbs_g,fat_g,fiber_g,sodium_mg,
           known_nutrients_mask
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         servingId,
         id,
         draft.servingDescription,
         draft.servingGrams,
+        draft.nutritionBasisAmount ?? draft.servingGrams,
+        draft.nutritionBasisUnit ?? 'g',
         draft.calories,
         draft.proteinG,
         draft.carbsG,
@@ -359,11 +404,14 @@ class SqliteFoodRepository implements FoodRepository {
         id,
       );
       await this.db.runAsync(
-        `UPDATE food_servings SET description=?,grams=?,calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sodium_mg=?,
+        `UPDATE food_servings SET description=?,grams=?,nutrition_basis_amount=?,nutrition_basis_unit=?,
+         calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sodium_mg=?,
          known_nutrients_mask=?
-         WHERE food_id=?`,
+        WHERE food_id=?`,
         draft.servingDescription,
         draft.servingGrams,
+        draft.nutritionBasisAmount ?? draft.servingGrams,
+        draft.nutritionBasisUnit ?? 'g',
         draft.calories,
         draft.proteinG,
         draft.carbsG,
@@ -414,11 +462,24 @@ class SqliteFoodLogRepository implements FoodLogRepository {
       foodId: row.food_id === null ? null : String(row.food_id),
       servingId: row.serving_id === null ? null : String(row.serving_id),
       quantity: Number(row.quantity),
+      quantityAmount: Number(row.quantity_amount ?? row.quantity),
+      quantityUnit:
+        row.quantity_unit === 'grams' || row.quantity_unit === 'milliliters'
+          ? row.quantity_unit
+          : 'servings',
       snapshot: {
         foodName: String(row.snapshot_food_name),
         brand: row.snapshot_brand === null ? null : String(row.snapshot_brand),
         servingDescription: String(row.snapshot_serving_description),
         servingGrams: Number(row.snapshot_serving_grams),
+        nutritionBasisAmount: Number(
+          row.snapshot_nutrition_basis_amount ?? row.snapshot_serving_grams,
+        ),
+        nutritionBasisUnit:
+          row.snapshot_nutrition_basis_unit === 'ml' ||
+          row.snapshot_nutrition_basis_unit === 'serving'
+            ? row.snapshot_nutrition_basis_unit
+            : 'g',
         knownNutrients: nutritionAvailabilityFromMask(
           Number(row.snapshot_known_nutrients_mask ?? 63),
         ),
@@ -435,23 +496,29 @@ class SqliteFoodLogRepository implements FoodLogRepository {
   async add(entry: FoodLogEntry): Promise<void> {
     await this.db.runAsync(
       `INSERT INTO food_log_entries (
-        id,local_date,meal_type,food_id,serving_id,quantity,snapshot_food_name,snapshot_brand,
+        id,local_date,meal_type,food_id,serving_id,quantity,quantity_amount,quantity_unit,
+        snapshot_food_name,snapshot_brand,
         snapshot_serving_description,snapshot_serving_grams,snapshot_calories,snapshot_protein_g,
-        snapshot_carbs_g,snapshot_fat_g,snapshot_fiber_g,snapshot_sodium_mg,logged_at_utc,
+        snapshot_nutrition_basis_amount,snapshot_nutrition_basis_unit,snapshot_carbs_g,
+        snapshot_fat_g,snapshot_fiber_g,snapshot_sodium_mg,logged_at_utc,
         snapshot_known_nutrients_mask
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       entry.id,
       entry.localDate,
       entry.mealType,
       entry.foodId,
       entry.servingId,
       entry.quantity,
+      entry.quantityAmount,
+      entry.quantityUnit,
       entry.snapshot.foodName,
       entry.snapshot.brand,
       entry.snapshot.servingDescription,
       entry.snapshot.servingGrams,
       entry.snapshot.calories,
       entry.snapshot.proteinG,
+      entry.snapshot.nutritionBasisAmount,
+      entry.snapshot.nutritionBasisUnit,
       entry.snapshot.carbsG,
       entry.snapshot.fatG,
       entry.snapshot.fiberG,
@@ -460,8 +527,179 @@ class SqliteFoodLogRepository implements FoodLogRepository {
       nutritionAvailabilityToMask(entry.snapshot.knownNutrients),
     );
   }
+  async update(entry: FoodLogEntry): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE food_log_entries SET local_date=?,meal_type=?,quantity=?,quantity_amount=?,quantity_unit=?,
+        snapshot_food_name=?,snapshot_brand=?,snapshot_serving_description=?,snapshot_serving_grams=?,
+        snapshot_nutrition_basis_amount=?,snapshot_nutrition_basis_unit=?,snapshot_calories=?,
+        snapshot_protein_g=?,snapshot_carbs_g=?,snapshot_fat_g=?,snapshot_fiber_g=?,snapshot_sodium_mg=?,
+        snapshot_known_nutrients_mask=? WHERE id=?`,
+      entry.localDate,
+      entry.mealType,
+      entry.quantity,
+      entry.quantityAmount,
+      entry.quantityUnit,
+      entry.snapshot.foodName,
+      entry.snapshot.brand,
+      entry.snapshot.servingDescription,
+      entry.snapshot.servingGrams,
+      entry.snapshot.nutritionBasisAmount,
+      entry.snapshot.nutritionBasisUnit,
+      entry.snapshot.calories,
+      entry.snapshot.proteinG,
+      entry.snapshot.carbsG,
+      entry.snapshot.fatG,
+      entry.snapshot.fiberG,
+      entry.snapshot.sodiumMg,
+      nutritionAvailabilityToMask(entry.snapshot.knownNutrients),
+      entry.id,
+    );
+  }
   async remove(id: UUID): Promise<void> {
     await this.db.runAsync('DELETE FROM food_log_entries WHERE id=?', id);
+  }
+}
+
+class SqliteLoggingPreferencesRepository implements LoggingPreferencesRepository {
+  constructor(private readonly db: SQLiteDatabase) {}
+  async get(): Promise<LoggingPreferences> {
+    const row = await this.db.getFirstAsync<SqlRow>('SELECT * FROM logging_preferences WHERE id=1');
+    return {
+      quickMenuSide: row?.quick_menu_side === 'left' ? 'left' : 'right',
+      dashboardVisualization: row?.dashboard_visualization === 'bars' ? 'bars' : 'rings',
+    };
+  }
+  async save(preferences: LoggingPreferences): Promise<void> {
+    await this.db.runAsync(
+      `INSERT INTO logging_preferences (id,quick_menu_side,dashboard_visualization) VALUES (1,?,?)
+       ON CONFLICT(id) DO UPDATE SET quick_menu_side=excluded.quick_menu_side,
+         dashboard_visualization=excluded.dashboard_visualization`,
+      preferences.quickMenuSide,
+      preferences.dashboardVisualization,
+    );
+  }
+}
+
+class SqliteLastFoodQuantityRepository implements LastFoodQuantityRepository {
+  constructor(private readonly db: SQLiteDatabase) {}
+  async get(foodId: UUID): Promise<LastFoodQuantity | null> {
+    const row = await this.db.getFirstAsync<SqlRow>(
+      'SELECT * FROM food_last_quantities WHERE food_id=?',
+      foodId,
+    );
+    if (!row) return null;
+    return {
+      foodId,
+      amount: Number(row.amount),
+      unit: row.unit === 'grams' || row.unit === 'milliliters' ? row.unit : 'servings',
+      updatedAtUtc: String(row.updated_at_utc),
+    };
+  }
+  async save(quantity: LastFoodQuantity): Promise<void> {
+    await this.db.runAsync(
+      `INSERT INTO food_last_quantities (food_id,amount,unit,updated_at_utc) VALUES (?,?,?,?)
+       ON CONFLICT(food_id) DO UPDATE SET amount=excluded.amount,unit=excluded.unit,
+         updated_at_utc=excluded.updated_at_utc`,
+      quantity.foodId,
+      quantity.amount,
+      quantity.unit,
+      quantity.updatedAtUtc,
+    );
+  }
+}
+
+function catalogFoodId(fdcId: number): UUID {
+  return `00000001-2026-4000-8000-${String(fdcId).padStart(12, '0')}`;
+}
+
+function catalogServingId(fdcId: number): UUID {
+  return `00000002-2026-4000-8000-${String(fdcId).padStart(12, '0')}`;
+}
+
+class SqliteCatalogRepository implements CatalogRepository {
+  constructor(private readonly db: SQLiteDatabase) {}
+  async getVersion(key: string): Promise<string | null> {
+    const row = await this.db.getFirstAsync<{ version: string }>(
+      'SELECT version FROM catalog_state WHERE key=?',
+      key,
+    );
+    return row?.version ?? null;
+  }
+  async seed(
+    key: string,
+    version: string,
+    foods: readonly CatalogFoodSeed[],
+    nowUtc: string,
+  ): Promise<void> {
+    if ((await this.getVersion(key)) === version) return;
+    await this.db.withTransactionAsync(async () => {
+      for (const item of foods) {
+        const foodId = catalogFoodId(item.fdcId);
+        const servingId = catalogServingId(item.fdcId);
+        await this.db.runAsync(
+          `INSERT INTO foods (
+            id,name,normalized_name,brand,is_favorite,source,archived_at_utc,created_at_utc,updated_at_utc,
+            barcode,barcode_format,barcode_key,provider_id,external_id,source_updated_at_utc,imported_at_utc,
+            verification_status,search_text
+          ) VALUES (?,?,?,NULL,0,'seed',NULL,?,?,NULL,NULL,NULL,NULL,?,NULL,NULL,'not_applicable',?)
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalized_name=excluded.normalized_name,
+            updated_at_utc=excluded.updated_at_utc,external_id=excluded.external_id,search_text=excluded.search_text`,
+          foodId,
+          item.usdaDescription,
+          normalizeFoodSearch(item.usdaDescription),
+          nowUtc,
+          nowUtc,
+          `usda:${item.fdcId}`,
+          normalizeFoodSearch(item.usdaDescription),
+        );
+        await this.db.runAsync(
+          `INSERT INTO food_servings (
+            id,food_id,description,grams,nutrition_basis_amount,nutrition_basis_unit,calories,protein_g,
+            carbs_g,fat_g,fiber_g,sodium_mg,known_nutrients_mask
+          ) VALUES (?,?, '100 g',100,100,'g',?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET calories=excluded.calories,protein_g=excluded.protein_g,
+            carbs_g=excluded.carbs_g,fat_g=excluded.fat_g,fiber_g=excluded.fiber_g,
+            sodium_mg=excluded.sodium_mg,known_nutrients_mask=excluded.known_nutrients_mask`,
+          servingId,
+          foodId,
+          item.per100g.calories,
+          item.per100g.proteinG,
+          item.per100g.carbsG,
+          item.per100g.fatG,
+          item.per100g.fiberG,
+          item.per100g.sodiumMg,
+          nutritionAvailabilityToMask(item.knownNutrients),
+        );
+        await this.db.runAsync('DELETE FROM food_aliases WHERE food_id=?', foodId);
+        for (const language of ['en', 'es'] as const) {
+          const values = new Map<string, string>();
+          for (const rawValue of [item.presentation[language], ...item.presentation.aliases]) {
+            const value = rawValue.trim();
+            const normalizedValue = normalizeFoodSearch(value);
+            if (normalizedValue && !values.has(normalizedValue)) {
+              values.set(normalizedValue, value);
+            }
+          }
+          for (const [index, [normalizedValue, value]] of [...values.entries()].entries()) {
+            await this.db.runAsync(
+              `INSERT INTO food_aliases (id,food_id,language,value,normalized_value) VALUES (?,?,?,?,?)`,
+              `usda-${item.fdcId}-${language}-${index}`,
+              foodId,
+              language,
+              value,
+              normalizedValue,
+            );
+          }
+        }
+      }
+      await this.db.runAsync(
+        `INSERT INTO catalog_state (key,version,seeded_at_utc) VALUES (?,?,?)
+         ON CONFLICT(key) DO UPDATE SET version=excluded.version,seeded_at_utc=excluded.seeded_at_utc`,
+        key,
+        version,
+        nowUtc,
+      );
+    });
   }
 }
 
@@ -526,8 +764,8 @@ class SqliteMaintenanceRepository implements DataMaintenanceRepository {
         DELETE FROM meal_template_items;
         DELETE FROM meal_templates;
         DELETE FROM food_log_entries;
-        DELETE FROM food_servings;
-        DELETE FROM foods;
+        DELETE FROM food_servings WHERE food_id IN (SELECT id FROM foods WHERE source='custom');
+        DELETE FROM foods WHERE source='custom';
         DELETE FROM nutrition_goals;
         DELETE FROM weight_entries;
         DELETE FROM body_measurements;
@@ -573,6 +811,9 @@ export function createSqliteRepositories(db: SQLiteDatabase): AppRepositories {
     nutritionGoals: new SqliteNutritionGoalsRepository(db),
     foods: new SqliteFoodRepository(db),
     foodLog: new SqliteFoodLogRepository(db),
+    loggingPreferences: new SqliteLoggingPreferencesRepository(db),
+    lastFoodQuantities: new SqliteLastFoodQuantityRepository(db),
+    catalog: new SqliteCatalogRepository(db),
     mealTemplates: new SqliteMealTemplateRepository(db),
     maintenance: new SqliteMaintenanceRepository(db),
     transactions: new SqliteTransactionRunner(db),

@@ -3,6 +3,11 @@ import { parseLocalDate } from '@/domain/localDate';
 import { normalizeBarcode } from '@/domain/barcode';
 import type { Clock } from './ports';
 import type { Settings } from '@/domain/types';
+import {
+  USDA_FOUNDATION_CATALOG,
+  USDA_FOUNDATION_CATALOG_KEY,
+  USDA_FOUNDATION_CATALOG_VERSION,
+} from '@/catalog/usdaFoundation';
 
 const settings: Settings = {
   language: 'es',
@@ -131,5 +136,63 @@ describe('FitnessService repository contract', () => {
     const dashboard = await service.getDashboard();
     expect(dashboard.nutritionComplete.proteinG).toBe(false);
     expect(dashboard.balance).toBeNull();
+  });
+
+  test('seeds USDA nutrition once, searches editorial aliases offline, and persists preferences', async () => {
+    const service = createMemoryFitnessService(
+      settings,
+      fixedClock,
+      new DeterministicIdGenerator(),
+    );
+    await service.seedCatalog(
+      USDA_FOUNDATION_CATALOG_KEY,
+      USDA_FOUNDATION_CATALOG_VERSION,
+      USDA_FOUNDATION_CATALOG,
+    );
+    await service.seedCatalog(
+      USDA_FOUNDATION_CATALOG_KEY,
+      USDA_FOUNDATION_CATALOG_VERSION,
+      USDA_FOUNDATION_CATALOG,
+    );
+    const foods = await service.listFoods('pechuga');
+    expect(foods).toHaveLength(2);
+    expect(foods[0]?.food.externalId).toBe('usda:2646170');
+    expect(foods[0]?.serving.calories).toBe(106);
+    await service.setLoggingPreferences({ quickMenuSide: 'left', dashboardVisualization: 'bars' });
+    expect(await service.getLoggingPreferences()).toEqual({
+      quickMenuSide: 'left',
+      dashboardVisualization: 'bars',
+    });
+  });
+
+  test('remembers the latest food quantity and edits a log entry safely', async () => {
+    const service = createMemoryFitnessService(
+      settings,
+      fixedClock,
+      new DeterministicIdGenerator(),
+    );
+    const food = await service.createFood({
+      name: 'Avena',
+      brand: null,
+      servingDescription: '100 g',
+      servingGrams: 100,
+      calories: 370,
+      proteinG: 13,
+      carbsG: 60,
+      fatG: 7,
+      fiberG: 10,
+      sodiumMg: null,
+    });
+    const entry = await service.logFoodQuantity(food, 'breakfast', { kind: 'grams', grams: 60 });
+    expect(await service.getLastFoodQuantity(food.food.id)).toMatchObject({
+      amount: 60,
+      unit: 'grams',
+    });
+    const updated = await service.updateFoodLogEntry(entry.id, parseLocalDate('2026-08-25'), {
+      mealType: 'snack',
+      amount: 40,
+      unit: 'grams',
+    });
+    expect(updated).toMatchObject({ mealType: 'snack', quantityAmount: 40, quantity: 0.4 });
   });
 });

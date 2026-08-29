@@ -6,6 +6,7 @@ import {
   AppText,
   Button,
   Card,
+  ChoiceRow,
   Field,
   InlineNotice,
   ProgressBar,
@@ -15,7 +16,10 @@ import {
 import { parseDecimalInput } from '@/domain/numericInput';
 import { displayToKg, kgToDisplay, roundTo } from '@/domain/units';
 import { calculateWeightSummary, type WeightSummary } from '@/domain/weightTrend';
+import { WeightTrendChart } from '@/components/WeightTrendChart';
 import type { Profile, Settings, WeightEntry } from '@/domain/types';
+import type { WeightBmi } from '@/application/FitnessService';
+import { filterWeightChartEntries, type WeightChartRange } from '@/domain/weightChart';
 import { useFitnessService } from '@/providers/servicesContext';
 
 export default function WeightScreen() {
@@ -28,13 +32,16 @@ export default function WeightScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [summary, setSummary] = useState<WeightSummary | null>(null);
   const [saved, setSaved] = useState(false);
+  const [range, setRange] = useState<WeightChartRange>('30d');
+  const [bmis, setBmis] = useState<Record<string, WeightBmi>>({});
   const load = useCallback(() => {
     Promise.all([service.listWeights(), service.getSettings(), service.getProfile()]).then(
-      ([items, currentSettings, currentProfile]) => {
+      async ([items, currentSettings, currentProfile]) => {
         setEntries(items);
         setSettings(currentSettings);
         setProfile(currentProfile);
         setSummary(calculateWeightSummary(items, currentProfile?.targetWeightKg ?? null));
+        setBmis(await service.getWeightBmis(items));
       },
     );
   }, [service]);
@@ -51,6 +58,7 @@ export default function WeightScreen() {
     );
   const unit = settings.unitSystem === 'metric' ? t('common.kg') : t('common.lb');
   const format = (kg: number) => `${roundTo(kgToDisplay(kg, settings.unitSystem), 1)} ${unit}`;
+  const latestBmi = summary?.latest ? bmis[summary.latest.id] : undefined;
   const add = async () => {
     const parsed = parseDecimalInput(weight);
     if (parsed === null || parsed <= 0) return;
@@ -92,6 +100,28 @@ export default function WeightScreen() {
                 {format(summary.latestChangeKg)}
               </AppText>
             ) : null}
+            {latestBmi ? (
+              <AppText variant="caption" muted>
+                {t('weight.bmi', {
+                  value: latestBmi.value.toFixed(1),
+                })}
+                {latestBmi.heightSource === 'current' ? ` ${t('weight.bmiCurrentHeight')}` : null}
+              </AppText>
+            ) : null}
+          </Card>
+          <Card>
+            <AppText variant="subtitle">{t('weight.chartTitle')}</AppText>
+            <ChoiceRow
+              value={range}
+              onChange={setRange}
+              options={[
+                { value: '7d', label: '7 d' },
+                { value: '30d', label: '30 d' },
+                { value: '90d', label: '90 d' },
+                { value: 'all', label: t('weight.all') },
+              ]}
+            />
+            <WeightTrendChart entries={filterWeightChartEntries(entries, range)} format={format} />
           </Card>
           <Card>
             <AppText variant="subtitle">{t('weight.movingAverage')}</AppText>
@@ -134,15 +164,23 @@ export default function WeightScreen() {
           <AppText muted>{t('common.noData')}</AppText>
         </Card>
       ) : (
-        [...entries].reverse().map((entry) => (
-          <Card key={entry.id}>
-            <View style={styles.between}>
-              <AppText variant="subtitle">{format(entry.weightKg)}</AppText>
-              <AppText muted>{entry.localDate}</AppText>
-            </View>
-            {entry.note ? <AppText muted>{entry.note}</AppText> : null}
-          </Card>
-        ))
+        [...entries].reverse().map((entry) => {
+          const bmi = bmis[entry.id];
+          return (
+            <Card key={entry.id}>
+              <View style={styles.between}>
+                <AppText variant="subtitle">{format(entry.weightKg)}</AppText>
+                <AppText muted>{entry.localDate}</AppText>
+              </View>
+              {entry.note ? <AppText muted>{entry.note}</AppText> : null}
+              {bmi ? (
+                <AppText variant="caption" muted>
+                  {t('weight.bmi', { value: bmi.value.toFixed(1) })}
+                </AppText>
+              ) : null}
+            </Card>
+          );
+        })
       )}
     </Screen>
   );

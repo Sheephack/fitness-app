@@ -9,6 +9,11 @@ import { SystemClock } from '@/application/systemClock';
 import { migrateDatabase } from '@/db/migrations';
 import { createSqliteRepositories, SqliteIdGenerator } from '@/db/sqliteRepositories';
 import { OpenFoodFactsProvider } from '@/integrations/OpenFoodFactsProvider';
+import {
+  USDA_FOUNDATION_CATALOG,
+  USDA_FOUNDATION_CATALOG_KEY,
+  USDA_FOUNDATION_CATALOG_VERSION,
+} from '@/catalog/usdaFoundation';
 import { ServicesContext } from './servicesContext';
 
 function Bootstrap({ children }: PropsWithChildren) {
@@ -29,6 +34,13 @@ function Bootstrap({ children }: PropsWithChildren) {
           locale?.languageCode ?? null,
           locale?.languageTag ?? null,
           locale?.regionCode ?? null,
+        ),
+      )
+      .then(() =>
+        services.service.seedCatalog(
+          USDA_FOUNDATION_CATALOG_KEY,
+          USDA_FOUNDATION_CATALOG_VERSION,
+          USDA_FOUNDATION_CATALOG,
         ),
       )
       .then(() => setReady(true));

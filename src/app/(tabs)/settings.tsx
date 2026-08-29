@@ -6,7 +6,13 @@ import { useTranslation } from 'react-i18next';
 import { i18n } from '@/i18n';
 import { resolveInitialSettings } from '@/application/devicePreferences';
 import { AppText, Button, Card, ChoiceRow, Screen, SectionHeader } from '@/components/ui';
-import type { Profile, Settings, SupportedLanguage, UnitSystem } from '@/domain/types';
+import type {
+  LoggingPreferences,
+  Profile,
+  Settings,
+  SupportedLanguage,
+  UnitSystem,
+} from '@/domain/types';
 import { useFitnessService } from '@/providers/servicesContext';
 
 export default function SettingsScreen() {
@@ -14,10 +20,16 @@ export default function SettingsScreen() {
   const { service } = useFitnessService();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [loggingPreferences, setLoggingPreferences] = useState<LoggingPreferences | null>(null);
   const load = useCallback(() => {
-    Promise.all([service.getSettings(), service.getProfile()]).then(([value, user]) => {
+    Promise.all([
+      service.getSettings(),
+      service.getProfile(),
+      service.getLoggingPreferences(),
+    ]).then(([value, user, preferences]) => {
       setSettings(value);
       setProfile(user);
+      setLoggingPreferences(preferences);
     });
   }, [service]);
   useFocusEffect(
@@ -25,7 +37,7 @@ export default function SettingsScreen() {
       load();
     }, [load]),
   );
-  if (!settings)
+  if (!settings || !loggingPreferences)
     return (
       <Screen>
         <AppText>{t('common.loading')}</AppText>
@@ -39,6 +51,10 @@ export default function SettingsScreen() {
   const units = async (value: UnitSystem) => {
     await service.setUnitSystem(value);
     load();
+  };
+  const updatePreferences = async (next: LoggingPreferences) => {
+    await service.setLoggingPreferences(next);
+    setLoggingPreferences(next);
   };
   const reset = () =>
     Alert.alert(t('settings.resetTitle'), t('settings.resetBody'), [
@@ -96,6 +112,33 @@ export default function SettingsScreen() {
           options={[
             { value: 'metric', label: t('onboarding.metric') },
             { value: 'imperial', label: t('onboarding.imperial') },
+          ]}
+        />
+      </Card>
+      <SectionHeader title={t('settings.quickActions')} />
+      <Card>
+        <AppText variant="label">{t('settings.quickActionsSide')}</AppText>
+        <ChoiceRow
+          value={loggingPreferences.quickMenuSide}
+          onChange={(quickMenuSide) =>
+            void updatePreferences({ ...loggingPreferences, quickMenuSide })
+          }
+          options={[
+            { value: 'left', label: t('settings.left') },
+            { value: 'right', label: t('settings.right') },
+          ]}
+        />
+      </Card>
+      <SectionHeader title={t('settings.dashboardView')} />
+      <Card>
+        <ChoiceRow
+          value={loggingPreferences.dashboardVisualization}
+          onChange={(dashboardVisualization) =>
+            void updatePreferences({ ...loggingPreferences, dashboardVisualization })
+          }
+          options={[
+            { value: 'bars', label: t('settings.bars') },
+            { value: 'rings', label: t('settings.rings') },
           ]}
         />
       </Card>

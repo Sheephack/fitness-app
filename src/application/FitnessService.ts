@@ -1,5 +1,6 @@
 import type {
   AppRepositories,
+  CatalogFoodSeed,
   Clock,
   ExternalFoodProduct,
   IdGenerator,
@@ -18,8 +19,10 @@ import type {
   FoodDraft,
   FoodLogEntry,
   FoodWithServing,
+  LastFoodQuantity,
   LogQuantity,
   LocalDate,
+  LoggingPreferences,
   MealTemplate,
   MealType,
   NutritionGoals,
@@ -31,6 +34,7 @@ import type {
   SupportedLanguage,
   UUID,
   UnitSystem,
+  WeightEntry,
 } from '@/domain/types';
 
 export interface DashboardData {
@@ -50,6 +54,19 @@ export interface JournalDayData {
   duplicableMeals: MealType[];
 }
 
+export interface QuickAddInput {
+  name: string;
+  mealType: MealType;
+  localDate?: LocalDate;
+  nutrition: NutritionValues;
+  knownNutrients: NutritionAvailability;
+}
+
+export interface WeightBmi {
+  value: number;
+  heightSource: 'historical' | 'current';
+}
+
 export class FitnessService {
   constructor(
     private readonly repositories: AppRepositories,
@@ -64,8 +81,24 @@ export class FitnessService {
     return defaults;
   }
 
+  async seedCatalog(
+    key: string,
+    version: string,
+    foods: readonly CatalogFoodSeed[],
+  ): Promise<void> {
+    await this.repositories.catalog.seed(key, version, foods, this.clock.now().utc);
+  }
+
   getSettings() {
     return this.repositories.settings.get();
+  }
+
+  getLoggingPreferences(): Promise<LoggingPreferences> {
+    return this.repositories.loggingPreferences.get();
+  }
+
+  setLoggingPreferences(preferences: LoggingPreferences): Promise<void> {
+    return this.repositories.loggingPreferences.save(preferences);
   }
 
   async setLanguage(language: SupportedLanguage): Promise<void> {
@@ -161,6 +194,8 @@ export class FitnessService {
       name: draft.name.trim(),
       brand: draft.brand?.trim() || null,
       knownNutrients: draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN,
+      nutritionBasisAmount: draft.nutritionBasisAmount ?? draft.servingGrams,
+      nutritionBasisUnit: draft.nutritionBasisUnit ?? 'g',
       importedAtUtc: draft.providerId ? (draft.importedAtUtc ?? now.utc) : null,
     };
     return this.repositories.foods.create(
@@ -222,11 +257,15 @@ export class FitnessService {
       foodId: food.food.id,
       servingId: food.serving.id,
       quantity,
+      quantityAmount: quantity,
+      quantityUnit: 'servings',
       snapshot: {
         foodName: food.food.name,
         brand: food.food.brand,
         servingDescription: food.serving.description,
         servingGrams: food.serving.grams,
+        nutritionBasisAmount: food.serving.nutritionBasisAmount,
+        nutritionBasisUnit: food.serving.nutritionBasisUnit,
         knownNutrients: food.serving.knownNutrients,
         calories: food.serving.calories,
         proteinG: food.serving.proteinG,
@@ -255,11 +294,20 @@ export class FitnessService {
       foodId: food.food.id,
       servingId: food.serving.id,
       quantity: resolved.multiplier,
+      quantityAmount:
+        input.kind === 'servings'
+          ? input.count
+          : input.kind === 'grams'
+            ? input.grams
+            : input.milliliters,
+      quantityUnit: input.kind,
       snapshot: {
         foodName: food.food.name,
         brand: food.food.brand,
         servingDescription: food.serving.description,
         servingGrams: food.serving.grams,
+        nutritionBasisAmount: food.serving.nutritionBasisAmount,
+        nutritionBasisUnit: food.serving.nutritionBasisUnit,
         knownNutrients: food.serving.knownNutrients,
         calories: food.serving.calories,
         proteinG: food.serving.proteinG,
@@ -267,6 +315,43 @@ export class FitnessService {
         fatG: food.serving.fatG,
         fiberG: food.serving.fiberG,
         sodiumMg: food.serving.sodiumMg,
+      },
+      loggedAtUtc: now.utc,
+    };
+    await this.repositories.foodLog.add(entry);
+    await this.repositories.lastFoodQuantities.save({
+      foodId: food.food.id,
+      amount: entry.quantityAmount,
+      unit: entry.quantityUnit,
+      updatedAtUtc: now.utc,
+    });
+    return entry;
+  }
+
+  getLastFoodQuantity(foodId: UUID): Promise<LastFoodQuantity | null> {
+    return this.repositories.lastFoodQuantities.get(foodId);
+  }
+
+  async logQuickAdd(input: QuickAddInput): Promise<FoodLogEntry> {
+    const now = this.clock.now();
+    const entry: FoodLogEntry = {
+      id: await this.ids.next(),
+      localDate: input.localDate ?? now.localDate,
+      mealType: input.mealType,
+      foodId: null,
+      servingId: null,
+      quantity: 1,
+      quantityAmount: 1,
+      quantityUnit: 'servings',
+      snapshot: {
+        foodName: input.name.trim() || 'Quick add',
+        brand: null,
+        servingDescription: 'Quick add',
+        servingGrams: 0,
+        nutritionBasisAmount: 1,
+        nutritionBasisUnit: 'serving',
+        knownNutrients: input.knownNutrients,
+        ...input.nutrition,
       },
       loggedAtUtc: now.utc,
     };
@@ -292,8 +377,58 @@ export class FitnessService {
     };
   }
 
-  removeFoodLogEntry(id: UUID) {
-    return this.repositories.foodLog.remove(id);
+  async removeFoodLogEntry(
+    id: UUID,
+    localDate = this.clock.now().localDate,
+  ): Promise<FoodLogEntry | null> {
+    const entry = (await this.repositories.foodLog.listForDate(localDate)).find(
+      (candidate) => candidate.id === id,
+    );
+    if (!entry) return null;
+    await this.repositories.foodLog.remove(id);
+    return entry;
+  }
+
+  restoreFoodLogEntry(entry: FoodLogEntry) {
+    return this.repositories.foodLog.add(entry);
+  }
+
+  async updateFoodLogEntry(
+    id: UUID,
+    localDate: LocalDate,
+    input: { mealType: MealType; amount: number; unit: FoodLogEntry['quantityUnit'] },
+  ): Promise<FoodLogEntry | null> {
+    const entry = (await this.repositories.foodLog.listForDate(localDate)).find(
+      (candidate) => candidate.id === id,
+    );
+    if (!entry || input.amount <= 0) return null;
+    const basis = entry.snapshot.nutritionBasisAmount;
+    const multiplier =
+      input.unit === 'servings'
+        ? input.amount
+        : input.unit === 'grams' && entry.snapshot.nutritionBasisUnit === 'g'
+          ? input.amount / basis
+          : input.unit === 'milliliters' && entry.snapshot.nutritionBasisUnit === 'ml'
+            ? input.amount / basis
+            : null;
+    if (multiplier === null || !Number.isFinite(multiplier) || multiplier <= 0) return null;
+    const updated: FoodLogEntry = {
+      ...entry,
+      mealType: input.mealType,
+      quantity: multiplier,
+      quantityAmount: input.amount,
+      quantityUnit: input.unit,
+    };
+    await this.repositories.foodLog.update(updated);
+    if (updated.foodId) {
+      await this.repositories.lastFoodQuantities.save({
+        foodId: updated.foodId,
+        amount: input.amount,
+        unit: input.unit,
+        updatedAtUtc: this.clock.now().utc,
+      });
+    }
+    return updated;
   }
 
   async duplicateYesterday(
@@ -372,6 +507,27 @@ export class FitnessService {
 
   listWeights() {
     return this.repositories.weights.list();
+  }
+
+  async getWeightBmis(entries: WeightEntry[]): Promise<Record<string, WeightBmi>> {
+    const profile = await this.repositories.profiles.get();
+    if (!profile) return {};
+    const measurements = await this.repositories.profiles.listHeightMeasurements(profile.id);
+    const result: Record<string, WeightBmi> = {};
+    for (const entry of entries) {
+      const historical = measurements
+        .filter(
+          (measurement) =>
+            measurement.measuredAtUtc <= entry.measuredAtUtc && measurement.valueCm > 0,
+        )
+        .at(-1);
+      const heightCm = historical?.valueCm ?? profile.heightCm;
+      result[entry.id] = {
+        value: entry.weightKg / (heightCm / 100) ** 2,
+        heightSource: historical ? 'historical' : 'current',
+      };
+    }
+    return result;
   }
 
   async getDashboard(localDate = this.clock.now().localDate): Promise<DashboardData> {

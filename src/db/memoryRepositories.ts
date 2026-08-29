@@ -1,8 +1,12 @@
 import type {
   AppRepositories,
+  CatalogFoodSeed,
+  CatalogRepository,
   Clock,
   FoodRepository,
   IdGenerator,
+  LastFoodQuantityRepository,
+  LoggingPreferencesRepository,
   MealTemplateRepository,
 } from '@/application/ports';
 import { FitnessService } from '@/application/FitnessService';
@@ -12,6 +16,9 @@ import type {
   FoodDraft,
   FoodLogEntry,
   FoodWithServing,
+  HeightMeasurement,
+  LastFoodQuantity,
+  LoggingPreferences,
   MealTemplate,
   NutritionGoals,
   Profile,
@@ -28,6 +35,10 @@ interface MemoryState {
   foods: FoodWithServing[];
   log: FoodLogEntry[];
   templates: MealTemplate[];
+  aliases: Record<string, string[]>;
+  catalogVersions: Record<string, string>;
+  loggingPreferences: LoggingPreferences;
+  lastFoodQuantities: Record<string, LastFoodQuantity>;
 }
 
 function clone<T>(value: T): T {
@@ -57,7 +68,9 @@ class MemoryFoodRepository implements FoodRepository {
         .filter(
           (item) =>
             !item.food.archivedAtUtc &&
-            normalizeFoodSearch(`${item.food.name} ${item.food.brand ?? ''}`).includes(normalized),
+            normalizeFoodSearch(
+              `${item.food.name} ${item.food.brand ?? ''} ${(this.state.aliases[item.food.id] ?? []).join(' ')}`,
+            ).includes(normalized),
         )
         .sort((a, b) => {
           const aExact =
@@ -73,8 +86,9 @@ class MemoryFoodRepository implements FoodRepository {
                 ? 1
                 : 2;
           return (
-            aExact - bExact ||
             Number(b.food.isFavorite) - Number(a.food.isFavorite) ||
+            Number(a.food.source === 'seed') - Number(b.food.source === 'seed') ||
+            aExact - bExact ||
             (recent.get(a.food.id) ?? Number.MAX_SAFE_INTEGER) -
               (recent.get(b.food.id) ?? Number.MAX_SAFE_INTEGER) ||
             a.food.name.localeCompare(b.food.name)
@@ -142,6 +156,8 @@ class MemoryFoodRepository implements FoodRepository {
         foodId: id,
         description: draft.servingDescription,
         grams: draft.servingGrams,
+        nutritionBasisAmount: draft.nutritionBasisAmount ?? draft.servingGrams,
+        nutritionBasisUnit: draft.nutritionBasisUnit ?? 'g',
         knownNutrients: draft.knownNutrients ?? ALL_NUTRIENTS_KNOWN,
         calories: draft.calories,
         proteinG: draft.proteinG,
@@ -169,6 +185,8 @@ class MemoryFoodRepository implements FoodRepository {
       ...item.serving,
       description: draft.servingDescription,
       grams: draft.servingGrams,
+      nutritionBasisAmount: draft.nutritionBasisAmount ?? draft.servingGrams,
+      nutritionBasisUnit: draft.nutritionBasisUnit ?? 'g',
       calories: draft.calories,
       proteinG: draft.proteinG,
       carbsG: draft.carbsG,
@@ -186,6 +204,100 @@ class MemoryFoodRepository implements FoodRepository {
   async archive(id: UUID, nowUtc: string): Promise<void> {
     const item = this.state.foods.find((candidate) => candidate.food.id === id);
     if (item) item.food = { ...item.food, archivedAtUtc: nowUtc, updatedAtUtc: nowUtc };
+  }
+}
+
+class MemoryLoggingPreferencesRepository implements LoggingPreferencesRepository {
+  constructor(private readonly state: MemoryState) {}
+  async get(): Promise<LoggingPreferences> {
+    return clone(this.state.loggingPreferences);
+  }
+  async save(preferences: LoggingPreferences): Promise<void> {
+    this.state.loggingPreferences = clone(preferences);
+  }
+}
+
+class MemoryLastFoodQuantityRepository implements LastFoodQuantityRepository {
+  constructor(private readonly state: MemoryState) {}
+  async get(foodId: UUID): Promise<LastFoodQuantity | null> {
+    return clone(this.state.lastFoodQuantities[foodId] ?? null);
+  }
+  async save(quantity: LastFoodQuantity): Promise<void> {
+    this.state.lastFoodQuantities[quantity.foodId] = clone(quantity);
+  }
+}
+
+function catalogFoodId(fdcId: number): UUID {
+  return `00000001-2026-4000-8000-${String(fdcId).padStart(12, '0')}`;
+}
+
+function catalogServingId(fdcId: number): UUID {
+  return `00000002-2026-4000-8000-${String(fdcId).padStart(12, '0')}`;
+}
+
+class MemoryCatalogRepository implements CatalogRepository {
+  constructor(private readonly state: MemoryState) {}
+  async getVersion(key: string): Promise<string | null> {
+    return this.state.catalogVersions[key] ?? null;
+  }
+  async seed(
+    key: string,
+    version: string,
+    foods: readonly CatalogFoodSeed[],
+    nowUtc: string,
+  ): Promise<void> {
+    if (this.state.catalogVersions[key] === version) return;
+    for (const item of foods) {
+      const foodId = catalogFoodId(item.fdcId);
+      const servingId = catalogServingId(item.fdcId);
+      const existing = this.state.foods.findIndex((food) => food.food.id === foodId);
+      const existingFood = existing >= 0 ? this.state.foods[existing] : undefined;
+      const seeded: FoodWithServing = {
+        food: {
+          id: foodId,
+          name: item.usdaDescription,
+          normalizedName: normalizeFoodSearch(item.usdaDescription),
+          brand: null,
+          isFavorite: existingFood?.food.isFavorite ?? false,
+          source: 'seed',
+          barcode: null,
+          barcodeFormat: null,
+          barcodeKey: null,
+          providerId: null,
+          externalId: `usda:${item.fdcId}`,
+          sourceUpdatedAtUtc: null,
+          importedAtUtc: null,
+          verificationStatus: 'not_applicable',
+          archivedAtUtc: null,
+          createdAtUtc: existingFood?.food.createdAtUtc ?? nowUtc,
+          updatedAtUtc: nowUtc,
+        },
+        serving: {
+          id: servingId,
+          foodId,
+          description: '100 g',
+          grams: 100,
+          nutritionBasisAmount: 100,
+          nutritionBasisUnit: 'g',
+          knownNutrients: item.knownNutrients,
+          ...item.per100g,
+        },
+      };
+      if (existing >= 0) this.state.foods[existing] = seeded;
+      else this.state.foods.push(seeded);
+      this.state.aliases[foodId] = [
+        item.presentation.en,
+        item.presentation.es,
+        ...item.presentation.aliases,
+      ].filter(
+        (value, index, all) =>
+          value.trim().length > 0 &&
+          all.findIndex(
+            (candidate) => normalizeFoodSearch(candidate) === normalizeFoodSearch(value),
+          ) === index,
+      );
+    }
+    this.state.catalogVersions[key] = version;
   }
 }
 
@@ -220,6 +332,10 @@ export function createMemoryAppServices(
     foods: [],
     log: [],
     templates: [],
+    aliases: {},
+    catalogVersions: {},
+    loggingPreferences: { quickMenuSide: 'right', dashboardVisualization: 'rings' },
+    lastFoodQuantities: {},
   };
   const foods = new MemoryFoodRepository(state);
   const repositories: AppRepositories = {
@@ -233,6 +349,10 @@ export function createMemoryAppServices(
       get: async () => clone(state.profile),
       save: async (profile) => {
         state.profile = clone(profile);
+      },
+      listHeightMeasurements: async (profileId): Promise<HeightMeasurement[]> => {
+        if (!state.profile || state.profile.id !== profileId) return [];
+        return [{ valueCm: state.profile.heightCm, measuredAtUtc: state.profile.updatedAtUtc }];
       },
     },
     weights: {
@@ -253,10 +373,17 @@ export function createMemoryAppServices(
       add: async (entry) => {
         state.log.push(clone(entry));
       },
+      update: async (entry) => {
+        const index = state.log.findIndex((candidate) => candidate.id === entry.id);
+        if (index >= 0) state.log[index] = clone(entry);
+      },
       remove: async (id) => {
         state.log = state.log.filter((entry) => entry.id !== id);
       },
     },
+    loggingPreferences: new MemoryLoggingPreferencesRepository(state),
+    lastFoodQuantities: new MemoryLastFoodQuantityRepository(state),
+    catalog: new MemoryCatalogRepository(state),
     mealTemplates: new MemoryMealTemplateRepository(state),
     maintenance: {
       resetAll: async () => {
@@ -264,9 +391,10 @@ export function createMemoryAppServices(
         state.profile = null;
         state.weights = [];
         state.goals = null;
-        state.foods = [];
+        state.foods = state.foods.filter((food) => food.food.source === 'seed');
         state.log = [];
         state.templates = [];
+        state.lastFoodQuantities = {};
       },
     },
     transactions: { run: async (operation) => operation() },

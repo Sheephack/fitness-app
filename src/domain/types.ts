@@ -18,6 +18,8 @@ export type UnitSystem = 'metric' | 'imperial';
 export type GoalType = 'lose' | 'maintain' | 'gain';
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'high';
 export type MealType = 'breakfast' | 'lunch' | 'snack' | 'dinner' | 'other';
+export type QuantityUnit = 'servings' | 'grams' | 'milliliters';
+export type NutritionBasisUnit = 'g' | 'ml' | 'serving';
 
 export interface Settings {
   language: SupportedLanguage;
@@ -45,6 +47,11 @@ export interface WeightEntry {
   measuredAtUtc: string;
   localDate: LocalDate;
   note: string | null;
+}
+
+export interface HeightMeasurement {
+  valueCm: number;
+  measuredAtUtc: string;
 }
 
 export interface NutrientRange {
@@ -102,7 +109,10 @@ export interface FoodServing extends NutritionValues {
   id: UUID;
   foodId: UUID;
   description: string;
+  /** Default documented household measure in grams. Volume-only foods use 0. */
   grams: number;
+  nutritionBasisAmount: number;
+  nutritionBasisUnit: NutritionBasisUnit;
   knownNutrients: NutritionAvailability;
 }
 
@@ -116,6 +126,8 @@ export interface FoodLogSnapshot extends NutritionValues {
   brand: string | null;
   servingDescription: string;
   servingGrams: number;
+  nutritionBasisAmount: number;
+  nutritionBasisUnit: NutritionBasisUnit;
   knownNutrients: NutritionAvailability;
 }
 
@@ -125,7 +137,10 @@ export interface FoodLogEntry {
   mealType: MealType;
   foodId: UUID | null;
   servingId: UUID | null;
+  /** Backwards-compatible multiplier used by existing meal templates. */
   quantity: number;
+  quantityAmount: number;
+  quantityUnit: QuantityUnit;
   snapshot: FoodLogSnapshot;
   loggedAtUtc: string;
 }
@@ -151,6 +166,8 @@ export interface FoodDraft extends NutritionValues {
   brand: string | null;
   servingDescription: string;
   servingGrams: number;
+  nutritionBasisAmount?: number;
+  nutritionBasisUnit?: NutritionBasisUnit;
   knownNutrients?: NutritionAvailability;
   barcode?: NormalizedBarcode | null;
   providerId?: string | null;
@@ -160,7 +177,30 @@ export interface FoodDraft extends NutritionValues {
   verificationStatus?: FoodVerificationStatus;
 }
 
-export type LogQuantity = { kind: 'servings'; count: number } | { kind: 'grams'; grams: number };
+export type LogQuantity =
+  | { kind: 'servings'; count: number }
+  | { kind: 'grams'; grams: number }
+  | { kind: 'milliliters'; milliliters: number };
+
+export interface FoodAlias {
+  id: UUID;
+  foodId: UUID;
+  language: SupportedLanguage;
+  value: string;
+  normalizedValue: string;
+}
+
+export interface LoggingPreferences {
+  quickMenuSide: 'left' | 'right';
+  dashboardVisualization: 'bars' | 'rings';
+}
+
+export interface LastFoodQuantity {
+  foodId: UUID;
+  amount: number;
+  unit: QuantityUnit;
+  updatedAtUtc: string;
+}
 
 export interface ProfileDraft {
   nickname: string;

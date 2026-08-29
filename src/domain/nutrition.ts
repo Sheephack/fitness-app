@@ -63,13 +63,31 @@ export function nutritionAvailabilityFromMask(mask: number): NutritionAvailabili
 export function resolveLogQuantity(
   serving: FoodServing,
   input: LogQuantity,
-): { multiplier: number; grams: number; values: NutritionValues } | null {
-  const amount = input.kind === 'servings' ? input.count : input.grams;
-  if (!Number.isFinite(amount) || amount <= 0 || serving.grams <= 0) return null;
-  const multiplier = input.kind === 'servings' ? input.count : input.grams / serving.grams;
+): {
+  multiplier: number;
+  grams: number | null;
+  milliliters: number | null;
+  values: NutritionValues;
+} | null {
+  const amount =
+    input.kind === 'servings'
+      ? input.count
+      : input.kind === 'grams'
+        ? input.grams
+        : input.milliliters;
+  const basisAmount = serving.nutritionBasisAmount ?? serving.grams;
+  const basisUnit = serving.nutritionBasisUnit ?? 'g';
+  if (!Number.isFinite(amount) || amount <= 0 || basisAmount <= 0) return null;
+  const compatible =
+    input.kind === 'servings' ||
+    (input.kind === 'grams' && basisUnit === 'g') ||
+    (input.kind === 'milliliters' && basisUnit === 'ml');
+  if (!compatible) return null;
+  const multiplier = input.kind === 'servings' ? input.count : amount / basisAmount;
   return {
     multiplier,
-    grams: serving.grams * multiplier,
+    grams: input.kind === 'milliliters' ? null : serving.grams * multiplier,
+    milliliters: input.kind === 'milliliters' ? amount : null,
     values: scaleNutrition(serving, multiplier),
   };
 }

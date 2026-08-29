@@ -24,6 +24,7 @@ function Navigation() {
         <Stack.Screen name="goals" options={{ presentation: 'modal', title: '' }} />
         <Stack.Screen name="food-form" options={{ presentation: 'modal', title: '' }} />
         <Stack.Screen name="add-food" options={{ presentation: 'modal', title: '' }} />
+        <Stack.Screen name="quick-add" options={{ presentation: 'modal', title: '' }} />
       </Stack>
     </>
   );

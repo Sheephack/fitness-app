@@ -2,6 +2,8 @@ import type {
   FoodDraft,
   FoodLogEntry,
   FoodWithServing,
+  HeightMeasurement,
+  LastFoodQuantity,
   LocalDate,
   MealTemplate,
   MealType,
@@ -9,6 +11,7 @@ import type {
   NormalizedBarcode,
   NutritionAvailability,
   NutritionValues,
+  LoggingPreferences,
   Profile,
   Settings,
   UUID,
@@ -49,6 +52,7 @@ export interface SettingsRepository {
 export interface ProfileRepository {
   get(): Promise<Profile | null>;
   save(profile: Profile): Promise<void>;
+  listHeightMeasurements(profileId: UUID): Promise<HeightMeasurement[]>;
 }
 
 export interface WeightRepository {
@@ -76,7 +80,40 @@ export interface FoodRepository {
 export interface FoodLogRepository {
   listForDate(localDate: LocalDate): Promise<FoodLogEntry[]>;
   add(entry: FoodLogEntry): Promise<void>;
+  update(entry: FoodLogEntry): Promise<void>;
   remove(id: UUID): Promise<void>;
+}
+
+export interface LoggingPreferencesRepository {
+  get(): Promise<LoggingPreferences>;
+  save(preferences: LoggingPreferences): Promise<void>;
+}
+
+export interface LastFoodQuantityRepository {
+  get(foodId: UUID): Promise<LastFoodQuantity | null>;
+  save(quantity: LastFoodQuantity): Promise<void>;
+}
+
+export interface CatalogFoodSeed {
+  fdcId: number;
+  usdaDescription: string;
+  per100g: NutritionValues;
+  knownNutrients: NutritionAvailability;
+  presentation: {
+    en: string;
+    es: string;
+    aliases: readonly string[];
+  };
+}
+
+export interface CatalogRepository {
+  getVersion(key: string): Promise<string | null>;
+  seed(
+    key: string,
+    version: string,
+    foods: readonly CatalogFoodSeed[],
+    nowUtc: string,
+  ): Promise<void>;
 }
 
 export interface MealTemplateRepository {
@@ -107,6 +144,9 @@ export interface AppRepositories {
   nutritionGoals: NutritionGoalsRepository;
   foods: FoodRepository;
   foodLog: FoodLogRepository;
+  loggingPreferences: LoggingPreferencesRepository;
+  lastFoodQuantities: LastFoodQuantityRepository;
+  catalog: CatalogRepository;
   mealTemplates: MealTemplateRepository;
   maintenance: DataMaintenanceRepository;
   transactions: TransactionRunner;
