@@ -32,23 +32,31 @@ export function QuickMenu() {
     {
       label: t('foodPicker.scan'),
       icon: 'barcode-outline' as const,
+      bottom: 72,
+      inset: 0,
       onPress: () =>
         router.push({ pathname: '/add-food', params: { start: 'scanner', express: '1' } }),
     },
     {
       label: t('foodPicker.search'),
       icon: 'search-outline' as const,
+      bottom: 126,
+      inset: 0,
       onPress: () => router.push('/add-food'),
+    },
+    {
+      label: t('journal.addFood'),
+      icon: 'flash-outline' as const,
+      bottom: 184,
+      inset: 0,
+      onPress: () => router.push('/quick-add' as never),
     },
     {
       label: t('home.logWeight'),
       icon: 'scale-outline' as const,
+      bottom: 244,
+      inset: 0,
       onPress: () => router.push('/(tabs)/weight'),
-    },
-    {
-      label: t('journal.addFood'),
-      icon: 'add-circle-outline' as const,
-      onPress: () => router.push('/quick-add' as never),
     },
   ];
   return (
@@ -64,13 +72,13 @@ export function QuickMenu() {
           styles.fab as ViewStyle,
           {
             backgroundColor: theme.accent,
-            shadowColor: theme.shadow.color,
+            shadowColor: theme.accent,
             left: side === 'left' ? 20 : undefined,
             right: side === 'right' ? 20 : undefined,
           },
         ]}
       >
-        <Ionicons name="add" size={28} color="#FFFFFF" />
+        <Ionicons name="add" size={29} color={theme.accentOn} />
       </Pressable>
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable
@@ -82,34 +90,63 @@ export function QuickMenu() {
         <View
           accessibilityViewIsModal
           style={[
-            styles.sheet as ViewStyle,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-              shadowColor: theme.shadow.color,
-            },
+            styles.orbit as ViewStyle,
+            { left: side === 'left' ? 20 : undefined, right: side === 'right' ? 20 : undefined },
           ]}
         >
-          <View style={[styles.handle as ViewStyle, { backgroundColor: theme.border }]} />
-          <Text style={[styles.title as TextStyle, { color: theme.text }]}>
-            {t('quickMenu.title')}
-          </Text>
           {actions.map((action) => (
             <Pressable
               key={action.label}
               accessibilityRole="button"
+              accessibilityLabel={action.label}
               onPress={() => choose(action.onPress)}
               style={({ pressed }) => [
-                styles.action as ViewStyle,
-                { backgroundColor: pressed ? theme.surfaceMuted : theme.surfaceAccent },
+                styles.orbitAction as ViewStyle,
+                {
+                  bottom: action.bottom,
+                  left: side === 'left' ? action.inset : undefined,
+                  right: side === 'right' ? action.inset : undefined,
+                  flexDirection: side === 'right' ? 'row-reverse' : 'row',
+                  backgroundColor: theme.surface,
+                  borderColor: theme.borderStrong,
+                  shadowColor: theme.accent,
+                  opacity: pressed ? 0.7 : 1,
+                },
               ]}
             >
-              <Ionicons name={action.icon} size={22} color={theme.accentStrong} />
+              <View
+                style={[
+                  styles.actionIcon as ViewStyle,
+                  {
+                    backgroundColor: theme.surfaceMuted,
+                    borderColor: theme.accentStrong,
+                    shadowColor: theme.accent,
+                  },
+                ]}
+              >
+                <Ionicons name={action.icon} size={21} color={theme.accentStrong} />
+              </View>
               <Text style={[styles.actionLabel as TextStyle, { color: theme.text }]}>
                 {action.label}
               </Text>
             </Pressable>
           ))}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('quickMenu.close')}
+            onPress={() => setOpen(false)}
+            style={[
+              styles.center as ViewStyle,
+              {
+                backgroundColor: theme.accent,
+                shadowColor: theme.accent,
+                left: side === 'left' ? 0 : undefined,
+                right: side === 'right' ? 0 : undefined,
+              },
+            ]}
+          >
+            <Ionicons name="close" size={28} color={theme.accentOn} />
+          </Pressable>
         </View>
       </Modal>
     </>
@@ -120,40 +157,64 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     bottom: 76,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowOpacity: 0.72,
+    shadowRadius: 17,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(2,3,12,0.62)' },
+  orbit: { position: 'absolute', bottom: 76, width: 184, height: 324 },
+  center: {
+    position: 'absolute',
+    bottom: 0,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 9,
+    shadowOpacity: 0.8,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  orbitAction: {
+    position: 'absolute',
+    width: 176,
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 26,
+    paddingHorizontal: 4,
+    elevation: 7,
+    shadowOpacity: 0.46,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 5 },
+  },
+  actionIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 5,
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.7,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
   },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8, 18, 13, 0.32)' },
-  sheet: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 26,
-    padding: 18,
-    gap: 10,
-    elevation: 8,
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
+  actionLabel: {
+    maxWidth: 112,
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
   },
-  handle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 4, marginBottom: 2 },
-  title: { fontSize: 19, fontWeight: '700', marginBottom: 4 },
-  action: {
-    minHeight: 52,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-  },
-  actionLabel: { fontSize: 16, fontWeight: '600' },
 });

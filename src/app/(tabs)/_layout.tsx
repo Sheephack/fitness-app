@@ -17,10 +17,11 @@ export default function TabsLayout() {
           tabBarStyle: {
             backgroundColor: theme.tab,
             borderTopColor: theme.border,
-            height: 62,
-            paddingBottom: 7,
+            height: 68,
+            paddingBottom: 8,
+            paddingTop: 5,
           },
-          tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
+          tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
         }}
       >
         <Tabs.Screen

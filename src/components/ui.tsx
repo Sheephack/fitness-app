@@ -54,7 +54,11 @@ export function Card({ children, style }: PropsWithChildren<{ style?: ViewStyle 
   const theme = useAppTheme();
   return (
     <View
-      style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }, style]}
+      style={[
+        styles.card,
+        { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+        style,
+      ]}
     >
       {children}
     </View>
@@ -102,7 +106,8 @@ export function Button({
         : variant === 'secondary'
           ? theme.surfaceMuted
           : 'transparent';
-  const color = variant === 'primary' || variant === 'danger' ? '#FFFFFF' : theme.text;
+  const color =
+    variant === 'primary' ? theme.accentOn : variant === 'danger' ? '#FFFFFF' : theme.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -113,8 +118,14 @@ export function Button({
         styles.button,
         {
           backgroundColor: background,
-          borderColor: theme.border,
-          opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
+          borderColor: variant === 'ghost' ? 'transparent' : theme.border,
+          shadowColor: variant === 'primary' ? theme.accent : 'transparent',
+          shadowOpacity: variant === 'primary' ? 0.48 : 0,
+          shadowRadius: variant === 'primary' ? 15 : 0,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: variant === 'primary' ? 6 : 0,
+          opacity: disabled ? 0.45 : 1,
+          transform: [{ scale: pressed ? 0.98 : 1 }],
         },
       ]}
     >
@@ -183,8 +194,8 @@ export function ChoiceRow<T extends string>({
             style={[
               styles.choice,
               {
-                backgroundColor: selected ? theme.accentSoft : theme.surface,
-                borderColor: selected ? theme.accent : theme.border,
+                backgroundColor: selected ? theme.accentSoft : theme.surfaceRaised,
+                borderColor: selected ? theme.accentStrong : theme.border,
               },
             ]}
           >
@@ -249,15 +260,15 @@ export function InlineNotice({
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flexGrow: 1 },
-  screenContent: { flexGrow: 1, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
-  preview: { marginHorizontal: -20, paddingVertical: 7, paddingHorizontal: 20 },
+  screenContent: { flexGrow: 1, paddingHorizontal: 18, paddingBottom: 40, gap: 18 },
+  preview: { marginHorizontal: -18, paddingVertical: 7, paddingHorizontal: 18 },
   previewText: { color: '#FFFFFF', textAlign: 'center', fontSize: 12, fontWeight: '700' },
-  card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, padding: 18, gap: 10 },
-  display: { fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -0.8 },
+  card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, padding: 16, gap: 10 },
+  display: { fontSize: 36, lineHeight: 42, fontWeight: '700', letterSpacing: -0.9 },
   title: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: -0.3 },
   subtitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
   body: { fontSize: 16, lineHeight: 23, fontWeight: '400' },
-  label: { fontSize: 14, lineHeight: 20, fontWeight: '700', letterSpacing: 0.35 },
+  label: { fontSize: 13, lineHeight: 18, fontWeight: '700', letterSpacing: 0.45 },
   caption: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
   button: {
     minHeight: 48,
@@ -273,7 +284,7 @@ const styles = StyleSheet.create({
   error: { fontSize: 13 },
   choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   choice: {
-    minHeight: 44,
+    minHeight: 46,
     justifyContent: 'center',
     borderWidth: 1,
     borderRadius: 999,
@@ -293,7 +304,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
     justifyContent: 'center',
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },

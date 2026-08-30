@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Haptics from 'expo-haptics';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import type { ExternalFoodProduct } from '@/application/ports';
@@ -56,6 +57,34 @@ function candidateForm(product: ExternalFoodProduct): ReviewForm {
     fiber: visible('fiberG', product.nutrition.fiberG),
     sodium: visible('sodiumMg', product.nutrition.sodiumMg),
   };
+}
+
+function FoodVisual({
+  name,
+  fallbackBackground,
+  fallbackColor,
+}: {
+  name: string;
+  fallbackBackground: string;
+  fallbackColor: string;
+}) {
+  const normalized = name.toLocaleLowerCase();
+  const isOats = normalized.includes('avena') || normalized.includes('oat');
+  return isOats ? (
+    <Image
+      source={require('../../assets/images/nutrition/oats.png')}
+      style={styles.foodVisual}
+      accessibilityLabel={name}
+    />
+  ) : (
+    <View
+      style={[styles.foodFallback, { backgroundColor: fallbackBackground }]}
+      accessible
+      accessibilityLabel={name}
+    >
+      <Ionicons name="nutrition-outline" size={19} color={fallbackColor} />
+    </View>
+  );
 }
 
 export default function AddFoodScreen() {
@@ -299,8 +328,23 @@ export default function AddFoodScreen() {
 
   return (
     <Screen>
-      <AppText variant="title">{t('foodPicker.title')}</AppText>
-      <AppText muted>{t('foodPicker.destination', { meal: t(`journal.${mealType}`) })}</AppText>
+      <View style={styles.topBar}>
+        <View>
+          <AppText variant="title">{t('foodPicker.title')}</AppText>
+          <AppText muted>{t('foodPicker.destination', { meal: t(`journal.${mealType}`) })}</AppText>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('common.cancel')}
+          onPress={() => router.back()}
+          style={[
+            styles.closeControl,
+            { backgroundColor: theme.surfaceMuted, borderColor: theme.border },
+          ]}
+        >
+          <Ionicons name="close" size={23} color={theme.text} />
+        </Pressable>
+      </View>
       {notice ? <InlineNotice tone={noticeTone}>{notice}</InlineNotice> : null}
 
       {step === 'picker' ? (
@@ -366,6 +410,11 @@ export default function AddFoodScreen() {
                   onPress={() => choose(food)}
                   style={styles.foodRow}
                 >
+                  <FoodVisual
+                    name={displayFoodName(food, displayLanguage)}
+                    fallbackBackground={theme.surfaceMuted}
+                    fallbackColor={theme.accentStrong}
+                  />
                   <View style={styles.grow}>
                     <AppText variant="subtitle">{displayFoodName(food, displayLanguage)}</AppText>
                     <AppText variant="caption" muted>
@@ -572,9 +621,32 @@ export default function AddFoodScreen() {
 }
 
 const styles = StyleSheet.create({
+  topBar: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  closeControl: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   grow: { flex: 1 },
   foodCard: { paddingVertical: 12 },
   foodRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  foodVisual: { width: 44, height: 44, borderRadius: 11 },
+  foodFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   preset: {

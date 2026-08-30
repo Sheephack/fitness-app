@@ -73,7 +73,7 @@ export function BarcodeScanner({ locked, onDetected }: BarcodeScannerProps) {
         onMountError={() => setMountError(true)}
       />
       <View pointerEvents="none" style={styles.overlay}>
-        <View style={[styles.guide, { borderColor: locked ? theme.accent : '#FFFFFF' }]} />
+        <View style={[styles.guide, { borderColor: locked ? theme.accent : theme.cyan }]} />
         <AppText style={styles.help}>
           {locked ? t('scanner.detected') : ready ? t('scanner.aim') : t('common.loading')}
         </AppText>

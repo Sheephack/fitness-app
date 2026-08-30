@@ -9,7 +9,7 @@ function Navigation() {
   const theme = useAppTheme();
   return (
     <>
-      <StatusBar style={theme.background === '#0D1310' ? 'light' : 'dark'} />
+      <StatusBar style={theme.isDark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: theme.background },

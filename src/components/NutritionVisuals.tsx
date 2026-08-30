@@ -17,14 +17,15 @@ export function CalorieRing({
   value,
   target,
   label,
+  size = 138,
 }: {
   value: number;
   target: number;
   label: string;
+  size?: number;
 }) {
   const theme = useAppTheme();
-  const size = 128;
-  const radius = 51;
+  const radius = (size - 26) / 2;
   const length = 2 * Math.PI * radius;
   const ratio = Math.max(0, Math.min(1, value / target));
   return (
@@ -46,15 +47,26 @@ export function CalorieRing({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke={theme.accent}
+          stroke={theme.accentStrong}
+          strokeOpacity={0.26}
           strokeWidth={12}
           fill="none"
-          strokeLinecap="round"
-          strokeDasharray={`${length} ${length}`}
-          strokeDashoffset={length * (1 - ratio)}
-          rotation="-90"
-          origin={`${size / 2}, ${size / 2}`}
         />
+        {ratio > 0 ? (
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={theme.accentStrong}
+            strokeWidth={12}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={`${length} ${length}`}
+            strokeDashoffset={length * (1 - ratio)}
+            rotation="-90"
+            origin={`${size / 2}, ${size / 2}`}
+          />
+        ) : null}
       </Svg>
       <View style={styles.ringLabel}>
         <AppText variant="title" style={styles.tabular}>
@@ -74,12 +86,14 @@ export function MacroRangeBar({
   known,
   min,
   max,
+  color,
 }: {
   label: string;
   value: number;
   known: boolean;
   min: number;
   max: number;
+  color?: string;
 }) {
   const { t } = useTranslation();
   const theme = useAppTheme();
@@ -103,19 +117,33 @@ export function MacroRangeBar({
         <View
           style={[
             styles.targetZone,
-            { left: zoneLeft, width: zoneWidth, backgroundColor: theme.accentSoft },
+            { left: zoneLeft, width: zoneWidth, backgroundColor: color ?? theme.accentSoft },
           ]}
         />
         {known ? (
-          <View
-            style={[
-              styles.rangeMarker,
-              {
-                left: markerLeft,
-                backgroundColor: state === 'above' ? theme.warning : theme.accentStrong,
-              },
-            ]}
-          />
+          <>
+            <View
+              style={[
+                styles.rangeMarker,
+                {
+                  left: markerLeft,
+                  backgroundColor:
+                    state === 'above' ? theme.warning : (color ?? theme.accentStrong),
+                },
+              ]}
+            />
+            <View
+              style={[
+                styles.rangeMarkerDot,
+                {
+                  left: markerLeft,
+                  backgroundColor:
+                    state === 'above' ? theme.warning : (color ?? theme.accentStrong),
+                  borderColor: theme.background,
+                },
+              ]}
+            />
+          </>
         ) : null}
       </View>
       <View style={styles.macroTop}>
@@ -139,45 +167,46 @@ export function MacroRangeBar({
 export function MacroRangeRing(props: Parameters<typeof MacroRangeBar>[0]) {
   const theme = useAppTheme();
   const { t } = useTranslation();
-  const state = rangeState(props.value, props.known, props.min, props.max);
   const radius = 26;
   const length = 2 * Math.PI * radius;
-  const scale = Math.max(props.max * 1.3, props.value * 1.1, 1);
-  const start = props.min / scale;
-  const span = (props.max - props.min) / scale;
-  const indicator = Math.min(0.995, props.value / scale);
+  const progress = props.known ? Math.max(0, Math.min(1, props.value / props.max)) : 0;
+  const color = props.color ?? theme.accentStrong;
   return (
     <View
       style={styles.miniRing}
       accessibilityLabel={`${props.label}: ${props.known ? `${Math.round(props.value)} g` : t('home.unknown')}`}
     >
-      <Svg width={72} height={72}>
+      <Svg width={86} height={86}>
         <Circle
-          cx={36}
-          cy={36}
+          cx={43}
+          cy={43}
           r={radius}
           stroke={theme.surfaceMuted}
           strokeWidth={7}
           fill="none"
         />
         <Circle
-          cx={36}
-          cy={36}
+          cx={43}
+          cy={43}
           r={radius}
-          stroke={theme.accentSoft}
+          stroke={color}
+          strokeOpacity={0.26}
           strokeWidth={7}
           fill="none"
-          strokeDasharray={`${length * span} ${length}`}
-          strokeDashoffset={-length * (1 - start)}
-          rotation="-90"
-          origin="36, 36"
         />
-        {props.known ? (
+        {progress > 0 ? (
           <Circle
-            cx={36 + Math.cos(indicator * Math.PI * 2 - Math.PI / 2) * radius}
-            cy={36 + Math.sin(indicator * Math.PI * 2 - Math.PI / 2) * radius}
-            r={4.5}
-            fill={state === 'above' ? theme.warning : theme.accentStrong}
+            cx={43}
+            cy={43}
+            r={radius}
+            stroke={color}
+            strokeWidth={7}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={`${length} ${length}`}
+            strokeDashoffset={length * (1 - progress)}
+            rotation="-90"
+            origin="43, 43"
           />
         ) : null}
       </Svg>
@@ -186,6 +215,9 @@ export function MacroRangeRing(props: Parameters<typeof MacroRangeBar>[0]) {
       </AppText>
       <AppText variant="caption" muted>
         {props.known ? `${Math.round(props.value)} g` : '—'}
+      </AppText>
+      <AppText variant="caption" style={{ color: theme.textSubtle }}>
+        {props.min}–{props.max} g
       </AppText>
     </View>
   );
@@ -198,16 +230,25 @@ const styles = StyleSheet.create({
   tabular: { fontVariant: ['tabular-nums'] },
   macroRow: { gap: 6 },
   macroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rangeTrack: { height: 10, borderRadius: 99, position: 'relative', overflow: 'hidden' },
+  rangeTrack: { height: 12, borderRadius: 99, position: 'relative', overflow: 'hidden' },
   targetZone: { position: 'absolute', top: 0, bottom: 0, borderRadius: 99 },
   rangeMarker: {
     position: 'absolute',
-    top: -2,
-    width: 4,
-    height: 14,
+    top: 0,
+    width: 3,
+    height: 12,
     borderRadius: 99,
     marginLeft: -2,
   },
-  miniRing: { width: 74, alignItems: 'center', gap: 1 },
+  rangeMarkerDot: {
+    position: 'absolute',
+    top: 2,
+    width: 8,
+    height: 8,
+    borderWidth: 2,
+    borderRadius: 99,
+    marginLeft: -4,
+  },
+  miniRing: { width: '100%', alignItems: 'center', gap: 1 },
   ringMacroLabel: { fontWeight: '700', textAlign: 'center' },
 });

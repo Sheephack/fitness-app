@@ -1,16 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import {
-  AppText,
-  Button,
-  ChoiceRow,
-  Field,
-  InlineNotice,
-  Screen,
-  SectionHeader,
-} from '@/components/ui';
+import { AppText, Button, ChoiceRow, Field, InlineNotice, Screen } from '@/components/ui';
 import { localDateFromDate } from '@/domain/localDate';
 import { parseDecimalInput } from '@/domain/numericInput';
 import { scaleNutrition, totalNutrition } from '@/domain/nutrition';
@@ -19,6 +12,14 @@ import { useFitnessService } from '@/providers/servicesContext';
 import { useAppTheme } from '@/theme/theme';
 
 const MEALS: MealType[] = ['breakfast', 'lunch', 'snack', 'dinner', 'other'];
+const MEAL_ICONS: Record<MealType, keyof typeof Ionicons.glyphMap> = {
+  breakfast: 'cafe-outline',
+  lunch: 'restaurant-outline',
+  snack: 'heart-outline',
+  dinner: 'moon-outline',
+  other: 'ellipsis-horizontal',
+};
+const MACRO_COLORS = ['cyan', 'turquoise', 'amber', 'magenta'] as const;
 
 function entryAmount(entry: FoodLogEntry): string {
   if (entry.quantityUnit === 'grams') return `${Math.round(entry.quantityAmount)} g`;
@@ -35,12 +36,12 @@ export default function JournalScreen() {
   const [entries, setEntries] = useState<FoodLogEntry[]>([]);
   const [templates, setTemplates] = useState<MealTemplate[]>([]);
   const [duplicable, setDuplicable] = useState<MealType[]>([]);
-  const [expanded, setExpanded] = useState<MealType | null>('breakfast');
+  const [activeMeal, setActiveMeal] = useState<MealType>('breakfast');
   const [undoEntry, setUndoEntry] = useState<FoodLogEntry | null>(null);
   const [editing, setEditing] = useState<FoodLogEntry | null>(null);
   const [editingAmount, setEditingAmount] = useState('1');
   const [editingMeal, setEditingMeal] = useState<MealType>('breakfast');
-  const [savingMeal, setSavingMeal] = useState<MealType | null>(null);
+  const [savingMeal, setSavingMeal] = useState(false);
   const [mealName, setMealName] = useState('');
   const [templateMeal, setTemplateMeal] = useState<MealType>('breakfast');
 
@@ -49,11 +50,10 @@ export default function JournalScreen() {
       setEntries(data.entries);
       setTemplates(data.templates);
       setDuplicable(data.duplicableMeals);
-      setExpanded((current) => current ?? data.entries.at(0)?.mealType ?? 'breakfast');
+      setActiveMeal((current) => current ?? data.entries.at(0)?.mealType ?? 'breakfast');
     });
   }, [service, today]);
   useFocusEffect(useCallback(load, [load]));
-
   const groups = useMemo(
     () =>
       Object.fromEntries(
@@ -61,6 +61,15 @@ export default function JournalScreen() {
       ) as Record<MealType, FoodLogEntry[]>,
     [entries],
   );
+  const activeEntries = groups[activeMeal] ?? [];
+  const activeTotals = totalNutrition(activeEntries);
+  const dayTotals = totalNutrition(entries);
+  const feedback =
+    params.feedback === 'food_logged'
+      ? t('feedback.foodLogged')
+      : params.feedback === 'meal_logged'
+        ? t('feedback.mealLogged')
+        : null;
   const openEntry = (entry: FoodLogEntry) => {
     setEditing(entry);
     setEditingAmount(String(entry.quantityAmount));
@@ -84,32 +93,24 @@ export default function JournalScreen() {
     setEditing(null);
     load();
   };
-  const duplicate = async (type: MealType) => {
-    await service.duplicateYesterday(type, today);
-    load();
-  };
-  const saveMeal = async (type: MealType) => {
-    if (!mealName.trim()) return;
-    await service.saveMealTemplate({ name: mealName, localDate: today, mealType: type });
-    setMealName('');
-    setSavingMeal(null);
-    load();
-  };
-  const feedback =
-    params.feedback === 'food_logged'
-      ? t('feedback.foodLogged')
-      : params.feedback === 'meal_logged'
-        ? t('feedback.mealLogged')
-        : null;
 
   return (
     <Screen>
-      <View style={styles.pageTitle}>
-        <AppText variant="label" muted>
+      <View style={styles.header}>
+        <AppText variant="caption" style={{ color: theme.textSubtle }}>
           {today}
         </AppText>
-        <AppText variant="display">{t('journal.title')}</AppText>
-        <AppText muted>{t('journal.compactSubtitle')}</AppText>
+        <View style={styles.headerLine}>
+          <AppText variant="display">{t('journal.title')}</AppText>
+          <View style={styles.energyReadout}>
+            <AppText variant="caption" style={{ color: theme.textSubtle }}>
+              {t('home.energy')}
+            </AppText>
+            <AppText variant="subtitle">
+              {Math.round(dayTotals.calories)} {t('common.kcal')}
+            </AppText>
+          </View>
+        </View>
       </View>
       {feedback ? <InlineNotice tone="success">{feedback}</InlineNotice> : null}
       {undoEntry ? (
@@ -130,149 +131,311 @@ export default function JournalScreen() {
         </InlineNotice>
       ) : null}
 
-      <View
-        style={[styles.mealStack, { borderColor: theme.border, backgroundColor: theme.surface }]}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.mealRailScroll}
+        contentContainerStyle={styles.mealRail}
+        accessibilityRole="tablist"
       >
         {MEALS.map((type) => {
-          const mealEntries = groups[type] ?? [];
-          const totals = totalNutrition(mealEntries);
-          const isOpen = expanded === type;
+          const active = activeMeal === type;
+          const count = groups[type].length;
           return (
-            <View key={type} style={[styles.mealGroup, { borderBottomColor: theme.border }]}>
-              <View style={styles.mealHeader}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={t(isOpen ? 'journal.collapseMeal' : 'journal.expandMeal', {
-                    meal: t(`journal.${type}`),
-                  })}
-                  onPress={() => setExpanded(isOpen ? null : type)}
-                  style={styles.mealToggle}
-                >
-                  <View style={styles.mealMain}>
-                    <AppText variant="subtitle">{t(`journal.${type}`)}</AppText>
-                    <AppText variant="caption" muted>
-                      {mealEntries.length
-                        ? t('journal.mealSummary', {
-                            count: mealEntries.length,
-                            calories: Math.round(totals.calories),
-                          })
-                        : t('journal.emptyMeal')}
-                    </AppText>
-                  </View>
-                  <AppText muted>{isOpen ? '⌃' : '⌄'}</AppText>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`${t('journal.addFood')} ${t(`journal.${type}`)}`}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/add-food',
-                      params: { mealType: type, localDate: today },
-                    })
-                  }
-                  style={[styles.addControl, { backgroundColor: theme.surfaceAccent }]}
-                >
-                  <AppText style={{ color: theme.accentStrong }}>+</AppText>
-                </Pressable>
+            <Pressable
+              key={type}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${t(`journal.${type}`)}. ${count} ${t('journal.itemCount', { count })}`}
+              onPress={() => setActiveMeal(type)}
+              style={({ pressed }) => [styles.mealStop, { opacity: pressed ? 0.72 : 1 }]}
+            >
+              <View
+                style={[
+                  styles.mealIcon,
+                  {
+                    backgroundColor: active ? theme.accent : theme.surfaceRaised,
+                    borderColor: active ? theme.accentStrong : theme.border,
+                    shadowColor: active ? theme.accent : 'transparent',
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={MEAL_ICONS[type]}
+                  size={22}
+                  color={active ? theme.accentOn : theme.textMuted}
+                />
               </View>
-              {isOpen ? (
-                <View style={styles.mealBody}>
-                  {mealEntries.map((entry) => {
-                    const values = scaleNutrition(entry.snapshot, entry.quantity);
-                    return (
-                      <Pressable
-                        key={entry.id}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${entry.snapshot.foodName}, ${entryAmount(entry)}, ${Math.round(values.calories)} kcal`}
-                        onPress={() => openEntry(entry)}
-                        style={[styles.logRow, { borderTopColor: theme.border }]}
-                      >
-                        <View style={styles.grow}>
-                          <AppText>{entry.snapshot.foodName}</AppText>
-                          <AppText variant="caption" muted>
-                            {entryAmount(entry)} · {Math.round(values.calories)} kcal
-                          </AppText>
-                        </View>
-                        <AppText variant="caption" muted>
-                          {t('common.edit')}
-                        </AppText>
-                      </Pressable>
-                    );
-                  })}
-                  {!mealEntries.length ? (
-                    <AppText variant="caption" muted>
-                      {t('journal.emptyMeal')}
-                    </AppText>
-                  ) : null}
-                  <View style={styles.mealActions}>
-                    {duplicable.includes(type) ? (
-                      <Button
-                        label={t('journal.duplicateYesterday')}
-                        variant="secondary"
-                        onPress={() => void duplicate(type)}
-                      />
-                    ) : null}
-                    {mealEntries.length ? (
-                      <Button
-                        label={t('journal.saveMeal')}
-                        variant="ghost"
-                        onPress={() => {
-                          setSavingMeal(type);
-                          setMealName('');
-                        }}
-                      />
-                    ) : null}
-                  </View>
-                  {savingMeal === type ? (
-                    <View style={styles.saveMeal}>
-                      <Field
-                        label={t('journal.mealName')}
-                        value={mealName}
-                        onChangeText={setMealName}
-                        autoFocus
-                      />
-                      <Button
-                        label={t('journal.saveMeal')}
-                        disabled={!mealName.trim()}
-                        onPress={() => void saveMeal(type)}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
+              <AppText
+                variant="caption"
+                style={{
+                  color: active ? theme.accentStrong : theme.textMuted,
+                  textAlign: 'center',
+                }}
+              >
+                {t(`journal.${type}`)}
+              </AppText>
+            </Pressable>
           );
         })}
+      </ScrollView>
+
+      <View
+        style={[
+          styles.activeSurface,
+          {
+            backgroundColor: theme.surface,
+            borderColor: theme.border,
+            shadowColor: theme.shadow.color,
+          },
+        ]}
+      >
+        <View style={styles.surfaceHeader}>
+          <View style={styles.grow}>
+            <AppText variant="label" style={{ color: theme.accentStrong }}>
+              {t(`journal.${activeMeal}`)}
+            </AppText>
+            <AppText variant="title">
+              {activeEntries.length
+                ? `${Math.round(activeTotals.calories)} ${t('common.kcal')}`
+                : t('journal.emptyMeal')}
+            </AppText>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${t('journal.addFood')} ${t(`journal.${activeMeal}`)}`}
+            onPress={() =>
+              router.push({
+                pathname: '/add-food',
+                params: { mealType: activeMeal, localDate: today },
+              })
+            }
+            style={({ pressed }) => [
+              styles.addButton,
+              { backgroundColor: theme.accent, opacity: pressed ? 0.75 : 1 },
+            ]}
+          >
+            <Ionicons name="add" size={25} color={theme.accentOn} />
+          </Pressable>
+        </View>
+        {activeEntries.length ? (
+          <View style={styles.macroRibbon}>
+            {[
+              activeTotals.calories,
+              activeTotals.proteinG,
+              activeTotals.carbsG,
+              activeTotals.fatG,
+            ].map((value, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.macroMetric,
+                  { borderRightColor: index === 3 ? 'transparent' : theme.border },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.macroMiniDot,
+                    { backgroundColor: theme[MACRO_COLORS[index] ?? 'cyan'] },
+                  ]}
+                />
+                <AppText variant="caption" style={{ color: theme.textSubtle }}>
+                  {index === 0
+                    ? t('home.calories')
+                    : t(`home.${['protein', 'carbs', 'fat'][index - 1]}`)}
+                </AppText>
+                <AppText variant="caption" style={{ fontVariant: ['tabular-nums'] }}>
+                  {Math.round(value)}
+                  {index === 0 ? '' : ' g'}
+                </AppText>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {activeEntries.length ? (
+          <View>
+            {activeEntries.map((entry) => {
+              const values = scaleNutrition(entry.snapshot, entry.quantity);
+              return (
+                <Pressable
+                  key={entry.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${entry.snapshot.foodName}, ${entryAmount(entry)}, ${Math.round(values.calories)} kcal`}
+                  onPress={() => openEntry(entry)}
+                  style={({ pressed }) => [
+                    styles.foodRow,
+                    { borderBottomColor: theme.border, opacity: pressed ? 0.66 : 1 },
+                  ]}
+                >
+                  <View style={[styles.foodGlyph, { backgroundColor: theme.surfaceMuted }]}>
+                    <Ionicons name="nutrition-outline" size={19} color={theme.accentStrong} />
+                  </View>
+                  <View style={styles.grow}>
+                    <AppText variant="subtitle">{entry.snapshot.foodName}</AppText>
+                    <AppText variant="caption" style={{ color: theme.textSubtle }}>
+                      {entryAmount(entry)}
+                    </AppText>
+                  </View>
+                  <View style={styles.calorieCell}>
+                    <AppText variant="subtitle" style={{ fontVariant: ['tabular-nums'] }}>
+                      {Math.round(values.calories)}
+                    </AppText>
+                    <AppText variant="caption" style={{ color: theme.textSubtle }}>
+                      {t('common.kcal')}
+                    </AppText>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              router.push({
+                pathname: '/add-food',
+                params: { mealType: activeMeal, localDate: today },
+              })
+            }
+            style={[styles.emptyAction, { borderColor: theme.border }]}
+          >
+            <Ionicons name="add-circle-outline" size={22} color={theme.accentStrong} />
+            <View>
+              <AppText variant="subtitle">{t('journal.addFood')}</AppText>
+              <AppText variant="caption" style={{ color: theme.textMuted }}>
+                {t('journal.emptyMeal')}
+              </AppText>
+            </View>
+          </Pressable>
+        )}
+        <View style={styles.contextActions}>
+          {duplicable.includes(activeMeal) ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void service.duplicateYesterday(activeMeal, today).then(load)}
+              style={styles.contextAction}
+            >
+              <Ionicons name="copy-outline" size={16} color={theme.accentStrong} />
+              <AppText variant="caption" style={{ color: theme.accentStrong }}>
+                {t('journal.duplicateYesterday')}
+              </AppText>
+            </Pressable>
+          ) : null}
+          {activeEntries.length ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSavingMeal(true);
+                setMealName('');
+              }}
+              style={styles.contextAction}
+            >
+              <Ionicons name="bookmark-outline" size={16} color={theme.accentStrong} />
+              <AppText variant="caption" style={{ color: theme.accentStrong }}>
+                {t('journal.saveMeal')}
+              </AppText>
+            </Pressable>
+          ) : null}
+        </View>
+        {savingMeal ? (
+          <View style={styles.saveArea}>
+            <Field
+              label={t('journal.mealName')}
+              value={mealName}
+              onChangeText={setMealName}
+              autoFocus
+            />
+            <Button
+              label={t('journal.saveMeal')}
+              disabled={!mealName.trim()}
+              onPress={() =>
+                void service
+                  .saveMealTemplate({ name: mealName, localDate: today, mealType: activeMeal })
+                  .then(() => {
+                    setSavingMeal(false);
+                    setMealName('');
+                    load();
+                  })
+              }
+            />
+          </View>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() =>
+            router.push({
+              pathname: '/add-food',
+              params: { mealType: activeMeal, localDate: today },
+            })
+          }
+          style={({ pressed }) => [
+            styles.addOutline,
+            { borderColor: theme.accent, opacity: pressed ? 0.65 : 1 },
+          ]}
+        >
+          <Ionicons name="add" size={20} color={theme.accentStrong} />
+          <AppText variant="subtitle" style={{ color: theme.accentStrong }}>
+            {t('journal.addFood')}
+          </AppText>
+        </Pressable>
       </View>
 
       {templates.length ? (
-        <>
-          <SectionHeader title={t('journal.savedMeals')} />
-          <ChoiceRow
-            value={templateMeal}
-            onChange={setTemplateMeal}
-            options={MEALS.map((value) => ({ value, label: t(`journal.${value}`) }))}
-          />
-          <View style={styles.templateList}>
+        <View style={styles.templates}>
+          <View style={styles.templateHeader}>
+            <AppText variant="label" style={{ color: theme.textMuted }}>
+              {t('journal.savedMeals')}
+            </AppText>
+            <ChoiceRow
+              value={templateMeal}
+              onChange={setTemplateMeal}
+              options={MEALS.map((value) => ({ value, label: t(`journal.${value}`) }))}
+            />
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.templateRail}
+          >
             {templates.map((template) => (
               <Pressable
                 key={template.id}
                 accessibilityRole="button"
                 onPress={() => void service.logMealTemplate(template, templateMeal).then(load)}
-                style={[styles.templateRow, { borderColor: theme.border }]}
+                style={({ pressed }) => [
+                  styles.templateChip,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: theme.surfaceRaised,
+                    opacity: pressed ? 0.7 : 1,
+                  },
+                ]}
               >
-                <View style={styles.grow}>
-                  <AppText variant="subtitle">{template.name}</AppText>
-                  <AppText variant="caption" muted>
-                    {t('journal.itemCount', { count: template.items.length })}
-                  </AppText>
-                </View>
-                <AppText style={{ color: theme.accentStrong }}>{t('journal.logMeal')}</AppText>
+                <Ionicons name="flash-outline" size={17} color={theme.accentStrong} />
+                <AppText variant="caption">{template.name}</AppText>
               </Pressable>
             ))}
-          </View>
-        </>
+          </ScrollView>
+        </View>
       ) : null}
+
+      <View
+        style={[styles.dayFooter, { backgroundColor: theme.surface, borderColor: theme.border }]}
+      >
+        <View>
+          <AppText variant="caption" style={{ color: theme.textSubtle }}>
+            {t('home.todaySnapshot')}
+          </AppText>
+          <AppText variant="title">
+            {Math.round(dayTotals.calories)} / {t('home.targetLabel')}
+          </AppText>
+        </View>
+        <View style={[styles.totalPill, { backgroundColor: theme.accentSoft }]}>
+          <AppText variant="subtitle" style={{ color: theme.accentInk }}>
+            {Math.round(dayTotals.calories)} {t('common.kcal')}
+          </AppText>
+        </View>
+      </View>
 
       <Modal
         transparent
@@ -315,60 +478,136 @@ export default function JournalScreen() {
 }
 
 const styles = StyleSheet.create({
-  pageTitle: { gap: 3, paddingTop: 8 },
+  header: { gap: 2, paddingTop: 10 },
+  headerLine: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  energyReadout: { alignItems: 'flex-end', paddingBottom: 4 },
   undoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  mealStack: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, overflow: 'hidden' },
-  mealGroup: { borderBottomWidth: StyleSheet.hairlineWidth },
-  mealHeader: {
-    minHeight: 68,
+  mealRailScroll: { flexGrow: 0, flexShrink: 0, height: 104 },
+  mealRail: { gap: 13, paddingHorizontal: 2, paddingVertical: 4, alignItems: 'flex-start' },
+  mealStop: {
+    width: 66,
+    minHeight: 82,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 5,
+  },
+  mealIcon: {
+    width: 52,
+    height: 52,
+    minHeight: 52,
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.65,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  activeSurface: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 18,
+    padding: 15,
+    gap: 13,
+    shadowOpacity: 0.3,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 5,
+  },
+  surfaceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  grow: { flex: 1, gap: 2 },
+  addButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  macroRibbon: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: '#00000000',
+    paddingVertical: 10,
+  },
+  macroMetric: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+    paddingHorizontal: 5,
+    borderRightWidth: StyleSheet.hairlineWidth,
+  },
+  macroMiniDot: { width: 5, height: 5, borderRadius: 3 },
+  foodRow: {
+    minHeight: 63,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 16,
-    paddingRight: 10,
     gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  mealToggle: {
-    flex: 1,
-    minHeight: 52,
+  foodGlyph: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calorieCell: { alignItems: 'flex-end', gap: 1 },
+  emptyAction: {
+    minHeight: 82,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 13,
+  },
+  contextActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 13 },
+  contextAction: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  saveArea: { gap: 8 },
+  addOutline: {
+    minHeight: 48,
+    borderWidth: 1.3,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  templates: { gap: 8 },
+  templateHeader: { gap: 8 },
+  templateRail: { gap: 8 },
+  templateChip: {
+    minHeight: 42,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 21,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dayFooter: {
+    minHeight: 76,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    padding: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
-  mealMain: { flex: 1, gap: 2 },
-  addControl: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealBody: { paddingHorizontal: 16, paddingBottom: 14, gap: 10 },
-  logRow: {
-    minHeight: 54,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  grow: { flex: 1 },
-  mealActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 2 },
-  saveMeal: { gap: 8 },
-  templateList: { gap: 8 },
-  templateRow: {
-    minHeight: 62,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
+  totalPill: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7 },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(8, 18, 13, 0.36)',
     justifyContent: 'flex-end',
+    backgroundColor: 'rgba(2,3,12,0.72)',
     padding: 12,
   },
-  editor: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 26, padding: 18, gap: 12 },
+  editor: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, padding: 18, gap: 12 },
 });
